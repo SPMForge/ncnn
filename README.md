@@ -71,6 +71,8 @@ https://github.com/Tencent/ncnn/releases/latest
 
   **[how to build ncnn library](https://github.com/Tencent/ncnn/wiki/how-to-build) on Linux / Windows / macOS / Raspberry Pi3, Pi4 / POWER / Android / NVIDIA Jetson / iOS / WebAssembly / AllWinner D1 / Loongson 2K1000**
 
+  **[Apple SwiftPM binary package guide](docs/how-to-build/swiftpm-binary-package.md) for the `spm-binary` packaging branch**
+
 </td>
 </tr>
 <tr>

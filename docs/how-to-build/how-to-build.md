@@ -26,6 +26,7 @@ git submodule update --init
 - [Build for AnyCloud platform with cross-compiling](#build-for-AnyCloud-platform-with-cross-compiling)
 - [Build for Android](#build-for-android)
 - [Build for iOS on macOS with xcode](#build-for-ios-on-macos-with-xcode)
+- [Apple SwiftPM binary package guide](swiftpm-binary-package.md)
 - [Build for WebAssembly](#build-for-webassembly)
 - [Build for AllWinner D1](#build-for-allwinner-d1)
 - [Build for Loongson 2K1000](#build-for-loongson-2k1000)
