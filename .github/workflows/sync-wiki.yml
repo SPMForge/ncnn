@@ -14,13 +14,20 @@ permissions:
 
 jobs:
   sync-wiki:
+    if: github.repository == 'Tencent/ncnn'
     permissions:
       contents: write  # for Git to git push
     runs-on: ubuntu-latest
+    env:
+      WIKI_SYNC_BOT_TOKEN: ${{ secrets.WIKI_SYNC_BOT_TOKEN }}
     steps:
     - uses: actions/checkout@v6
     - name: sync
       run: |
+        if [ -z "$WIKI_SYNC_BOT_TOKEN" ]; then
+          echo "WIKI_SYNC_BOT_TOKEN is not configured; skipping wiki sync."
+          exit 0
+        fi
         cp -r docs $GITHUB_WORKSPACE/ncnn.wiki
         cd $GITHUB_WORKSPACE/ncnn.wiki
         git config --global user.name "wiki-sync-bot"
@@ -28,5 +35,5 @@ jobs:
         git init
         git add .
         git commit -m "sync"
-        git remote add upstream https://${{ secrets.WIKI_SYNC_BOT_TOKEN }}@github.com/Tencent/ncnn.wiki.git
+        git remote add upstream https://${WIKI_SYNC_BOT_TOKEN}@github.com/Tencent/ncnn.wiki.git
         git push upstream master -f
