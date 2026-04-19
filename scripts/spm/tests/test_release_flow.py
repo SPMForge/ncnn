@@ -20,6 +20,18 @@ class LatestStableTagTests(unittest.TestCase):
             "20260113",
         )
 
+    def test_accepts_upstream_tag_ref_namespace(self) -> None:
+        self.assertEqual(
+            tag_selection.select_latest_stable_tag(
+                [
+                    "refs/upstream-tags/20240410",
+                    "refs/upstream-tags/20260113",
+                    "refs/upstream-tags/20250503",
+                ]
+            ),
+            "20260113",
+        )
+
     def test_rejects_when_no_stable_tag_is_available(self) -> None:
         with self.assertRaises(ValueError):
             tag_selection.select_latest_stable_tag(["refs/tags/v1.2.3", "refs/tags/latest"])

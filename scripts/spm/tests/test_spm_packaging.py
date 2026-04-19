@@ -1,6 +1,10 @@
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 from scripts.spm import packaging
+from scripts.spm import render_package
 
 
 class PackageVersionTests(unittest.TestCase):
@@ -92,6 +96,27 @@ class PackageRenderingTests(unittest.TestCase):
             '.binaryTarget(name: "ncnn_vulkan", url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113/ncnn-20260113-apple-vulkan.xcframework.zip", checksum: "vulkan-checksum")',
             package_contents,
         )
+
+    def test_combined_metadata_preserves_requested_package_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "current_release.json"
+            render_package._write_combined_metadata(
+                output_path=output_path,
+                package_name="custom-ncnn",
+                owner="SPMForge",
+                repo="ncnn",
+                releases=[
+                    packaging.ReleaseAsset(
+                        variant=packaging.CPU_VARIANT,
+                        upstream_tag="20260113",
+                        package_tag="1.0.20260113",
+                        checksum="cpu-checksum",
+                    )
+                ],
+            )
+
+            payload = json.loads(output_path.read_text())
+            self.assertEqual(payload["package_name"], "custom-ncnn")
 
 
 if __name__ == "__main__":

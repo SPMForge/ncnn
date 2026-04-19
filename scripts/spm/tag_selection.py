@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 
-_STABLE_TAG_PATTERN = re.compile(r"^refs/tags/(\d{8})$")
+_STABLE_TAG_PATTERN = re.compile(r"^refs/(?:tags|upstream-tags)/(\d{8})$")
 
 
 def select_latest_stable_tag(refs: list[str]) -> str:

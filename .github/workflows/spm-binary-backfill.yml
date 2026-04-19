@@ -123,6 +123,31 @@ jobs:
         run: |
           swift package dump-package >/tmp/ncnn-package.json
 
+      - name: prepare-release-ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/spm/current_release.json
+          if gh release view "${{ needs.resolve.outputs.package_tag }}" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if ! git diff --cached --quiet; then
+              echo "refusing to mutate metadata for existing package tag ${{ needs.resolve.outputs.package_tag }}" >&2
+              exit 1
+            fi
+          else
+            if ! git diff --cached --quiet; then
+              git commit -m "Backfill SwiftPM binary metadata for ${{ needs.resolve.outputs.package_tag }}"
+            fi
+            git push origin HEAD:spm-binary
+            if git ls-remote --exit-code --tags origin "refs/tags/${{ needs.resolve.outputs.package_tag }}" >/dev/null 2>&1; then
+              echo "package tag already exists without a release: ${{ needs.resolve.outputs.package_tag }}" >&2
+              exit 1
+            fi
+            git tag "${{ needs.resolve.outputs.package_tag }}"
+            git push origin "refs/tags/${{ needs.resolve.outputs.package_tag }}"
+          fi
+
       - name: create-release-notes
         run: |
           cat > /tmp/spm-release-notes.md <<'EOF'
@@ -149,18 +174,9 @@ jobs:
           else
             gh release create "${{ needs.resolve.outputs.package_tag }}" \
               --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
               --title "ncnn SwiftPM binary ${{ needs.resolve.outputs.package_tag }}" \
               --notes-file /tmp/spm-release-notes.md \
               artifacts/ncnn/*.zip \
               artifacts/ncnn_vulkan/*.zip
-          fi
-
-      - name: commit-manifest
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/spm/current_release.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Backfill SwiftPM binary metadata for ${{ needs.resolve.outputs.package_tag }}"
-            git push origin HEAD:spm-binary
           fi

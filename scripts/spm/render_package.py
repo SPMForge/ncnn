@@ -57,12 +57,13 @@ def _sort_release_assets(releases: list[packaging.ReleaseAsset]) -> list[packagi
 
 def _write_combined_metadata(
     output_path: Path,
+    package_name: str,
     owner: str,
     repo: str,
     releases: list[packaging.ReleaseAsset],
 ) -> None:
     payload = {
-        "package_name": packaging.DEFAULT_PACKAGE_NAME,
+        "package_name": package_name,
         "owner": owner,
         "repo": repo,
         "releases": [
@@ -97,7 +98,13 @@ def main() -> int:
 
     if arguments.output is not None:
         arguments.output.write_text(package_contents)
-    _write_combined_metadata(arguments.current_release_json, arguments.owner, arguments.repo, releases)
+    _write_combined_metadata(
+        arguments.current_release_json,
+        arguments.package_name,
+        arguments.owner,
+        arguments.repo,
+        releases,
+    )
     return 0
 
 
