@@ -101,7 +101,6 @@ jobs:
       CCACHE_DIR: ~/.ccache
       CCACHE_MAXSIZE: 2G
       CCACHE_COMPILERCHECK: content
-      CCACHE_BASEDIR: ${{ runner.temp }}
       CCACHE_NOHASHDIR: "true"
     steps:
       - uses: actions/checkout@v6
