@@ -13,6 +13,15 @@ README_PATH = REPO_ROOT / "README.md"
 
 
 class ReleaseBranchWorkflowTests(unittest.TestCase):
+    def _job_section(self, workflow: str, job_name: str, next_job_name: str | None = None) -> str:
+        start_marker = f"  {job_name}:\n"
+        start_index = workflow.index(start_marker)
+        if next_job_name is None:
+            return workflow[start_index:]
+        end_marker = f"  {next_job_name}:\n"
+        end_index = workflow.index(end_marker, start_index + len(start_marker))
+        return workflow[start_index:end_index]
+
     def test_repo_keeps_only_packaging_specific_workflows(self) -> None:
         workflow_names = sorted(path.name for path in WORKFLOWS_DIR.glob("*.yml"))
         self.assertEqual(
@@ -62,13 +71,17 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
 
     def test_publish_core_runs_packaging_verification_gates(self) -> None:
         workflow = PUBLISH_CORE_WORKFLOW_PATH.read_text()
+        build_job = self._job_section(workflow, "build", "release")
         self.assertIn("python3 -m unittest", workflow)
         self.assertIn("scripts.spm.tests.test_xcframework_validation", workflow)
         self.assertIn("scripts/spm/validate_mergeable_xcframework.py", workflow)
         self.assertIn("if [ \"${{ inputs.release_channel }}\" = \"alpha\" ]", workflow)
+        self.assertIn("runs-on: macos-15", build_job)
+        self.assertNotIn("runs-on: macos-15-intel", build_job)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
         workflow = VALIDATE_WORKFLOW_PATH.read_text()
+        build_job = self._job_section(workflow, "build")
         self.assertIn("name: validate-apple-release-pipeline", workflow)
         self.assertIn("push:", workflow)
         self.assertIn("- main", workflow)
@@ -79,6 +92,8 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/spm/validate_mergeable_xcframework.py", workflow)
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
         self.assertIn("--explicit-tag \"${{ inputs.upstream_tag }}\"", workflow)
+        self.assertIn("runs-on: macos-15", build_job)
+        self.assertNotIn("runs-on: macos-15-intel", build_job)
 
     def test_readme_describes_wrapper_repo_only(self) -> None:
         readme = README_PATH.read_text()

@@ -68,7 +68,7 @@ jobs:
             required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
           - variant: ncnn_vulkan
             required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator xros xros-simulator
-    runs-on: macos-15-intel
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
