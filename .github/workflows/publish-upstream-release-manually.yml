@@ -1,0 +1,31 @@
+name: publish-upstream-release-manually
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Upstream Tencent/ncnn tag in YYYYMMDD format.
+        required: true
+      release_channel:
+        description: Publish as the next alpha prerelease or as the stable package version.
+        required: true
+        type: choice
+        default: alpha
+        options:
+          - alpha
+          - stable
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-upstream-release-manually-${{ github.ref }}-${{ inputs.upstream_tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    uses: ./.github/workflows/_publish-upstream-release-core.yml
+    with:
+      upstream_tag: ${{ inputs.upstream_tag }}
+      release_channel: ${{ inputs.release_channel }}
+      artifact_prefix: spm-backfill

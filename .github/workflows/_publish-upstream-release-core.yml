@@ -1,0 +1,228 @@
+name: _publish-upstream-release-core
+
+on:
+  workflow_call:
+    inputs:
+      upstream_tag:
+        required: false
+        type: string
+      release_channel:
+        required: true
+        type: string
+      artifact_prefix:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: _publish-upstream-release-core-${{ github.workflow }}-${{ inputs.release_channel }}-${{ inputs.upstream_tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.0.app/Contents/Developer
+
+jobs:
+  verify:
+    name: Verify packaging gates
+    if: github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: run-packaging-unit-tests
+        run: |
+          python3 -m unittest \
+            scripts.spm.tests.test_release_flow \
+            scripts.spm.tests.test_source_acquisition \
+            scripts.spm.tests.test_spm_packaging \
+            scripts.spm.tests.test_xcframework_validation \
+            scripts.tests.test_release_branch_workflows
+
+  resolve:
+    name: Resolve package release
+    if: github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
+      package_tag: ${{ steps.resolve.outputs.package_tag }}
+      should_release: ${{ steps.release_status.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: fetch-package-tags
+        run: |
+          git fetch origin 'refs/tags/*:refs/tags/*'
+
+      - name: fetch-upstream-tags
+        run: |
+          python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
+
+      - name: resolve-upstream-tag
+        id: resolve
+        run: |
+          select_args=(--repo-root "$GITHUB_WORKSPACE" --release-channel "${{ inputs.release_channel }}" --github-output "$GITHUB_OUTPUT")
+          if [ -n "${{ inputs.upstream_tag }}" ]; then
+            select_args+=(--explicit-tag "${{ inputs.upstream_tag }}")
+          fi
+          python3 scripts/spm/select_upstream_tag.py "${select_args[@]}"
+
+      - name: check-existing-release
+        id: release_status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.resolve.outputs.package_tag }}" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build Apple artifacts (${{ matrix.variant }})
+    needs:
+      - verify
+      - resolve
+    if: needs.resolve.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - variant: ncnn
+            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
+          - variant: ncnn_vulkan
+            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator xros xros-simulator
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: fetch-upstream-tags
+        run: |
+          python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
+
+      - name: prepare-upstream-source
+        run: |
+          python3 scripts/spm/source_acquisition.py export-source \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" \
+            --destination "$RUNNER_TEMP/upstream-source"
+
+      - name: build-xcframework
+        run: |
+          python3 scripts/spm/build_apple_xcframework.py \
+            --variant "${{ matrix.variant }}" \
+            --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" \
+            --source-root "$RUNNER_TEMP/upstream-source" \
+            --output-dir "$RUNNER_TEMP/spm-artifacts"
+
+      - name: validate-xcframework
+        run: |
+          validation_args=()
+          for platform in ${{ matrix.required_platforms }}; do
+            validation_args+=(--require-platform "$platform")
+          done
+          python3 scripts/spm/validate_mergeable_xcframework.py \
+            "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.xcframework" \
+            "${validation_args[@]}"
+
+      - name: upload-artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.variant }}
+          path: ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}
+
+  release:
+    name: Publish selected release channel
+    needs:
+      - resolve
+      - build
+    if: needs.resolve.outputs.should_release == 'true'
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: download-cpu-artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_prefix }}-ncnn
+          path: artifacts/ncnn
+
+      - name: download-vulkan-artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_prefix }}-ncnn_vulkan
+          path: artifacts/ncnn_vulkan
+
+      - name: render-package
+        run: |
+          python3 scripts/spm/render_package.py \
+            --release-metadata artifacts/ncnn/ncnn.release.json \
+            --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json \
+            --current-release-json scripts/spm/current_release.json
+
+      - name: validate-package-manifest
+        run: |
+          swift package dump-package >/tmp/ncnn-package.json
+
+      - name: prepare-release-ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TARGET_BRANCH="${{ github.event.repository.default_branch || 'main' }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/spm/current_release.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update SwiftPM binary metadata for ${{ needs.resolve.outputs.package_tag }}"
+          fi
+          git push origin HEAD:"$TARGET_BRANCH"
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ needs.resolve.outputs.package_tag }}" >/dev/null 2>&1; then
+            echo "package tag already exists without a release: ${{ needs.resolve.outputs.package_tag }}" >&2
+            exit 1
+          fi
+          git tag "${{ needs.resolve.outputs.package_tag }}"
+          git push origin "refs/tags/${{ needs.resolve.outputs.package_tag }}"
+
+      - name: create-release-notes
+        run: |
+          channel_label="${{ inputs.release_channel }}"
+          if [ "${{ inputs.release_channel }}" = "sync" ]; then
+            channel_label="alpha prerelease (scheduled latest stable detection)"
+          fi
+          cat > /tmp/spm-release-notes.md <<EOF
+          Apple SwiftPM binary release for ncnn.
+
+          - Migration model: wrapper-style packaging branch on SPMForge/ncnn
+          - Upstream source tag: ${{ needs.resolve.outputs.upstream_tag }}
+          - Package tag: ${{ needs.resolve.outputs.package_tag }}
+          - Release channel: ${channel_label}
+          - Source acquisition: repo-local source acquisition contract with exported upstream snapshot
+          - Products: NCNN, NCNNVulkan
+          - Vulkan caveat: watchOS and watchOS Simulator are intentionally excluded
+          - Verification: script unit tests, xcframework artifact validation, local xcframework smoke tests, swift package dump-package
+          EOF
+
+      - name: publish-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_args=()
+          if [ "${{ inputs.release_channel }}" = "alpha" ] || [ "${{ inputs.release_channel }}" = "sync" ]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "${{ needs.resolve.outputs.package_tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            "${release_args[@]}" \
+            --title "ncnn SwiftPM binary ${{ needs.resolve.outputs.package_tag }}" \
+            --notes-file /tmp/spm-release-notes.md \
+            artifacts/ncnn/*.zip \
+            artifacts/ncnn_vulkan/*.zip

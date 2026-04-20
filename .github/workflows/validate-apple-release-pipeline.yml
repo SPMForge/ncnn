@@ -1,0 +1,112 @@
+name: validate-apple-release-pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Optional fixed Tencent/ncnn tag in YYYYMMDD format for reproducible validation.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-apple-release-pipeline-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.0.app/Contents/Developer
+
+jobs:
+  verify:
+    name: Validate release pipeline
+    runs-on: ubuntu-latest
+    outputs:
+      upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: run-packaging-unit-tests
+        run: |
+          python3 -m unittest \
+            scripts.spm.tests.test_release_flow \
+            scripts.spm.tests.test_source_acquisition \
+            scripts.spm.tests.test_spm_packaging \
+            scripts.spm.tests.test_xcframework_validation \
+            scripts.tests.test_release_branch_workflows
+
+      - name: validate-workflow-yaml
+        run: |
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |path| YAML.load_file(path) }; puts "workflow-yaml-ok"'
+
+      - name: fetch-upstream-tags
+        run: |
+          python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
+
+      - name: resolve-upstream-tag
+        id: resolve
+        run: |
+          select_args=(--repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT")
+          if [ -n "${{ inputs.upstream_tag }}" ]; then
+            select_args+=(--explicit-tag "${{ inputs.upstream_tag }}")
+          fi
+          python3 scripts/spm/select_upstream_tag.py "${select_args[@]}"
+
+  build:
+    name: Build and validate Apple artifacts (${{ matrix.variant }})
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          - variant: ncnn
+            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
+          - variant: ncnn_vulkan
+            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator xros xros-simulator
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: fetch-upstream-tags
+        run: |
+          python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
+
+      - name: prepare-upstream-source
+        run: |
+          python3 scripts/spm/source_acquisition.py export-source \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
+            --destination "$RUNNER_TEMP/upstream-source"
+
+      - name: build-xcframework
+        run: |
+          python3 scripts/spm/build_apple_xcframework.py \
+            --variant "${{ matrix.variant }}" \
+            --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
+            --source-root "$RUNNER_TEMP/upstream-source" \
+            --output-dir "$RUNNER_TEMP/spm-artifacts"
+
+      - name: validate-xcframework
+        run: |
+          validation_args=()
+          for platform in ${{ matrix.required_platforms }}; do
+            validation_args+=(--require-platform "$platform")
+          done
+          python3 scripts/spm/validate_mergeable_xcframework.py \
+            "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.xcframework" \
+            "${validation_args[@]}"
+
+      - name: upload-validation-artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}
+          if-no-files-found: ignore

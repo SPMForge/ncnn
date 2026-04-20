@@ -1,0 +1,10 @@
+{
+  "package_platforms": {
+    "ios": "13.0",
+    "ios-maccatalyst": "13.1",
+    "macos": "11.0",
+    "tvos": "11.0",
+    "watchos": "6.0",
+    "xros": "1.0"
+  }
+}
