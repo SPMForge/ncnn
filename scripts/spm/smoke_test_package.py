@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,9 +25,18 @@ def _run(command: list[str], cwd: Path) -> None:
     subprocess.run(command, check=True, cwd=cwd)
 
 
+def _stage_xcframework(package_root: Path, xcframework_path: Path) -> Path:
+    artifacts_root = package_root / "Artifacts"
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    staged_xcframework_path = artifacts_root / xcframework_path.name
+    shutil.copytree(xcframework_path, staged_xcframework_path)
+    return staged_xcframework_path.relative_to(package_root)
+
+
 def _write_consumer_package(package_root: Path, variant: packaging.Variant, xcframework_path: Path) -> None:
     package_root.mkdir(parents=True, exist_ok=True)
     (package_root / "Smoke").mkdir(parents=True, exist_ok=True)
+    local_xcframework_path = _stage_xcframework(package_root, xcframework_path)
 
     package_swift = f"""// swift-tools-version: 5.9
 
@@ -41,7 +51,7 @@ let package = Package(
         .executable(name: "Smoke", targets: ["Smoke"]),
     ],
     targets: [
-        .binaryTarget(name: "{variant.target_name}", path: "{xcframework_path.as_posix()}"),
+        .binaryTarget(name: "{variant.target_name}", path: "{local_xcframework_path.as_posix()}"),
         .executableTarget(
             name: "Smoke",
             dependencies: ["{variant.target_name}"],

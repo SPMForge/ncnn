@@ -225,6 +225,27 @@ class SmokeTestScriptTests(unittest.TestCase):
         self.assertIn("xcodebuild", script)
         self.assertIn("NCNNSmoke", script)
 
+    def test_smoke_test_stages_xcframework_under_package_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            package_root = temporary_root / "consumer"
+            xcframework_path = temporary_root / "fixtures" / "ncnn.xcframework"
+            xcframework_path.mkdir(parents=True)
+            (xcframework_path / "Info.plist").write_text("fixture")
+
+            from scripts.spm import smoke_test_package
+
+            smoke_test_package._write_consumer_package(
+                package_root,
+                packaging.CPU_VARIANT,
+                xcframework_path,
+            )
+
+            manifest = (package_root / "Package.swift").read_text()
+            self.assertIn('.binaryTarget(name: "ncnn", path: "Artifacts/ncnn.xcframework")', manifest)
+            self.assertNotIn(str(xcframework_path), manifest)
+            self.assertTrue((package_root / "Artifacts" / "ncnn.xcframework" / "Info.plist").exists())
+
 
 class BuildCommandTests(unittest.TestCase):
     def test_watchos_arm64_32_slice_skips_install_name_rewrite(self) -> None:
