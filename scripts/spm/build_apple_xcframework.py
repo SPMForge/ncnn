@@ -44,6 +44,16 @@ def _base_environment(arguments: argparse.Namespace) -> dict[str, str]:
     return environment
 
 
+def _compiler_launcher_flags() -> list[str]:
+    ccache_path = os.environ.get("CCACHE_BIN") or shutil.which("ccache")
+    if not ccache_path:
+        return []
+    return [
+        f"-DCMAKE_C_COMPILER_LAUNCHER={ccache_path}",
+        f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache_path}",
+    ]
+
+
 def _cmake_configure_command(
     variant: packaging.Variant,
     platform: packaging.Platform,
@@ -75,6 +85,7 @@ def _cmake_configure_command(
         "-DNCNN_BUILD_BENCHMARK=OFF",
         "-DNCNN_BUILD_TESTS=OFF",
         "-DNCNN_INSTALL_SDK=ON",
+        *_compiler_launcher_flags(),
     ]
 
     if variant is packaging.VULKAN_VARIANT:

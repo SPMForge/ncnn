@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.spm import packaging
 from scripts.spm import build_apple_xcframework
@@ -263,17 +264,35 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_cmake_configure_disables_code_signing_for_generated_xcode_project(self) -> None:
-        command = build_apple_xcframework._cmake_configure_command(
-            packaging.CPU_VARIANT,
-            packaging.CPU_VARIANT.platforms[0],
-            source_root=Path("/tmp/source"),
-            build_dir=Path("/tmp/build"),
-            install_dir=Path("/tmp/install"),
-        )
+        with mock.patch.object(build_apple_xcframework, "_compiler_launcher_flags", return_value=[]):
+            command = build_apple_xcframework._cmake_configure_command(
+                packaging.CPU_VARIANT,
+                packaging.CPU_VARIANT.platforms[0],
+                source_root=Path("/tmp/source"),
+                build_dir=Path("/tmp/build"),
+                install_dir=Path("/tmp/install"),
+            )
 
         self.assertIn("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO", command)
         self.assertIn("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO", command)
         self.assertIn("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Manual", command)
+
+    def test_cmake_configure_uses_ccache_launcher_when_available(self) -> None:
+        with mock.patch.object(
+            build_apple_xcframework,
+            "_compiler_launcher_flags",
+            return_value=["-DCMAKE_C_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache"],
+        ):
+            command = build_apple_xcframework._cmake_configure_command(
+                packaging.CPU_VARIANT,
+                packaging.CPU_VARIANT.platforms[0],
+                source_root=Path("/tmp/source"),
+                build_dir=Path("/tmp/build"),
+                install_dir=Path("/tmp/install"),
+            )
+
+        self.assertIn("-DCMAKE_C_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache", command)
+        self.assertIn("-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache", command)
 
     def test_cmake_build_install_disables_code_signing(self) -> None:
         command = build_apple_xcframework._build_command(Path("/tmp/build"))

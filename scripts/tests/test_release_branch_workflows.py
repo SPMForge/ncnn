@@ -78,6 +78,10 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("if [ \"${{ inputs.release_channel }}\" = \"alpha\" ]", workflow)
         self.assertIn("runs-on: macos-15", build_job)
         self.assertNotIn("runs-on: macos-15-intel", build_job)
+        self.assertIn("uses: actions/cache@v4", build_job)
+        self.assertIn("path: ~/.ccache", build_job)
+        self.assertIn("CCACHE_DIR: ~/.ccache", build_job)
+        self.assertIn("build-ccache-stats", build_job)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
         workflow = VALIDATE_WORKFLOW_PATH.read_text()
@@ -94,6 +98,10 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("--explicit-tag \"${{ inputs.upstream_tag }}\"", workflow)
         self.assertIn("runs-on: macos-15", build_job)
         self.assertNotIn("runs-on: macos-15-intel", build_job)
+        self.assertIn("uses: actions/cache@v4", build_job)
+        self.assertIn("path: ~/.ccache", build_job)
+        self.assertIn("CCACHE_DIR: ~/.ccache", build_job)
+        self.assertIn("build-ccache-stats", build_job)
 
     def test_readme_describes_wrapper_repo_only(self) -> None:
         readme = README_PATH.read_text()

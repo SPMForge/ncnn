@@ -69,10 +69,36 @@ jobs:
           - variant: ncnn_vulkan
             required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator xros xros-simulator
     runs-on: macos-15
+    env:
+      CCACHE_DIR: ~/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ runner.temp }}
+      CCACHE_NOHASHDIR: "true"
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: restore-ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'toolchains/ios.toolchain.cmake', 'scripts/spm/platforms.json') }}
+          restore-keys: |
+            ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
+            ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-
+
+      - name: install-ccache
+        run: |
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
+          ccache --version
+
+      - name: reset-ccache-stats
+        run: |
+          ccache --zero-stats
 
       - name: fetch-upstream-tags
         run: |
@@ -110,3 +136,8 @@ jobs:
           name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
           path: ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}
           if-no-files-found: ignore
+
+      - name: build-ccache-stats
+        if: always()
+        run: |
+          ccache --show-stats
