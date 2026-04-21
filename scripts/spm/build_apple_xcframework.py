@@ -232,21 +232,6 @@ def _should_rewrite_install_name(platform: packaging.Platform) -> bool:
     return "arm64_32" not in platform.archs
 
 
-def _stage_dynamic_library(
-    source_binary: Path,
-    output_dir: Path,
-    target_name: str,
-    platform: packaging.Platform,
-    environment: dict[str, str],
-) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    staged_binary = output_dir / f"lib{target_name}.dylib"
-    shutil.copy2(source_binary, staged_binary)
-    if _should_rewrite_install_name(platform):
-        _run(["install_name_tool", "-id", f"@rpath/{staged_binary.name}", str(staged_binary)], env=environment)
-    return staged_binary
-
-
 def _stage_framework_bundle(
     source_binary: Path,
     headers_source: Path,
@@ -299,8 +284,6 @@ def _stage_framework_bundle(
 
 def _create_xcframework(
     variant: packaging.Variant,
-    headers_path: Path,
-    staged_libraries: list[Path],
     staged_frameworks: list[Path],
     output_dir: Path,
     environment: dict[str, str],
@@ -310,8 +293,6 @@ def _create_xcframework(
         shutil.rmtree(xcframework_path)
 
     command = ["xcodebuild", "-create-xcframework"]
-    for staged_library in staged_libraries:
-        command.extend(["-library", str(staged_library), "-headers", str(headers_path)])
     for staged_framework in staged_frameworks:
         command.extend(["-framework", str(staged_framework)])
     command.extend(["-output", str(xcframework_path)])
@@ -412,7 +393,6 @@ def main() -> int:
     workspace_root.mkdir(parents=True)
     environment = _compiler_cache_environment(environment, workspace_root)
 
-    staged_libraries = []
     staged_frameworks = []
     headers_path: Path | None = None
     staging_root = workspace_root / "staging"
@@ -421,33 +401,21 @@ def main() -> int:
         install_dir, dynamic_library = _build_platform_slice(source_root, variant, platform, workspace_root, environment)
         if headers_path is None:
             headers_path = _stage_headers(install_dir, staging_root / variant.target_name, variant.module_name)
-        if platform.swiftpm_platform == "macos":
-            staged_framework = _stage_framework_bundle(
-                source_binary=dynamic_library,
-                headers_source=headers_path,
-                output_dir=staging_root / variant.target_name / platform.swiftpm_platform,
-                bundle_name=variant.target_name,
-                module_name=variant.module_name,
-                platform=platform,
-                environment=environment,
-            )
-            staged_frameworks.append(staged_framework)
-        else:
-            staged_library = _stage_dynamic_library(
-                dynamic_library,
-                staging_root / variant.target_name / platform.swiftpm_platform,
-                variant.target_name,
-                platform,
-                environment,
-            )
-            staged_libraries.append(staged_library)
+        staged_framework = _stage_framework_bundle(
+            source_binary=dynamic_library,
+            headers_source=headers_path,
+            output_dir=staging_root / variant.target_name / platform.swiftpm_platform,
+            bundle_name=variant.target_name,
+            module_name=variant.module_name,
+            platform=platform,
+            environment=environment,
+        )
+        staged_frameworks.append(staged_framework)
 
     assert headers_path is not None
 
     xcframework_path = _create_xcframework(
         variant=variant,
-        headers_path=headers_path,
-        staged_libraries=staged_libraries,
         staged_frameworks=staged_frameworks,
         output_dir=workspace_root,
         environment=environment,

@@ -40,6 +40,8 @@ Both variants are built with:
 
 macOS packaging detail:
 
+- Every Apple slice is wrapped as a framework bundle inside the XCFramework.
+- iOS, simulator, Catalyst, tvOS, watchOS, and visionOS slices use a flat framework layout.
 - The macOS XCFramework slice is wrapped as a native versioned framework bundle.
 - Preserve `Versions/Current`, top-level symlinks, and `Resources/Info.plist`; do not flatten the macOS slice into a bare `.dylib` directory.
 
