@@ -8,7 +8,9 @@ from unittest import mock
 
 from scripts.spm import packaging
 from scripts.spm import build_apple_xcframework
+from scripts.spm import preflight_apple_platforms
 from scripts.spm import render_package
+from scripts.spm import validate_package_contract
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -246,6 +248,102 @@ class SmokeTestScriptTests(unittest.TestCase):
             self.assertIn('.binaryTarget(name: "ncnn", path: "Artifacts/ncnn.xcframework")', manifest)
             self.assertNotIn(str(xcframework_path), manifest)
             self.assertTrue((package_root / "Artifacts" / "ncnn.xcframework" / "Info.plist").exists())
+
+
+class ValidationWorkflowHelperTests(unittest.TestCase):
+    def test_validate_package_contract_accepts_fresh_release_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            repo_root = temporary_root / "repo"
+            (repo_root / "scripts" / "spm").mkdir(parents=True)
+            shutil.copy2(PACKAGE_SWIFT_PATH, repo_root / "Package.swift")
+            shutil.copy2(PLATFORM_METADATA_PATH, repo_root / "scripts" / "spm" / "platforms.json")
+
+            cpu_metadata_path = temporary_root / "ncnn.release.json"
+            cpu_metadata_path.write_text(
+                json.dumps(
+                    {
+                        "target_name": "ncnn",
+                        "upstream_tag": "20260113",
+                        "package_tag": "1.0.20260113-alpha.1",
+                        "checksum": "cpu-checksum",
+                    }
+                )
+            )
+            vulkan_metadata_path = temporary_root / "ncnn_vulkan.release.json"
+            vulkan_metadata_path.write_text(
+                json.dumps(
+                    {
+                        "target_name": "ncnn_vulkan",
+                        "upstream_tag": "20260113",
+                        "package_tag": "1.0.20260113-alpha.1",
+                        "checksum": "vulkan-checksum",
+                    }
+                )
+            )
+
+            process = subprocess.run(
+                [
+                    "python3",
+                    str(REPO_ROOT / "scripts" / "spm" / "validate_package_contract.py"),
+                    "--repo-root",
+                    str(repo_root),
+                    "--release-metadata",
+                    str(cpu_metadata_path),
+                    "--release-metadata",
+                    str(vulkan_metadata_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(process.returncode, 0, msg=process.stderr)
+            payload = json.loads(process.stdout)
+            self.assertEqual(payload["release_count"], 2)
+            self.assertIn("package_root", payload)
+
+    def test_preflight_rejects_required_platform_drift_from_variant_contract(self) -> None:
+        with self.assertRaises(ValueError):
+            preflight_apple_platforms._validate_required_platforms(
+                packaging.CPU_VARIANT,
+                ["ios", "macos"],
+            )
+
+    def test_preflight_checks_sdk_access_for_each_required_platform(self) -> None:
+        with mock.patch.object(
+            preflight_apple_platforms,
+            "_capture_output",
+            side_effect=[
+                "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk",
+                "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk",
+            ],
+        ):
+            payload = preflight_apple_platforms._preflight_sdk_support(["ios", "ios-simulator"])
+
+        self.assertEqual(
+            payload,
+            [
+                {
+                    "platform": "ios",
+                    "sdk": "iphoneos",
+                    "sdk_path": "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk",
+                },
+                {
+                    "platform": "ios-simulator",
+                    "sdk": "iphonesimulator",
+                    "sdk_path": "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk",
+                },
+            ],
+        )
+
+    def test_preflight_reports_install_hint_when_sdk_support_is_missing(self) -> None:
+        with mock.patch.object(
+            preflight_apple_platforms,
+            "_capture_output",
+            side_effect=RuntimeError("xcrun: error: SDK \"xros\" cannot be located"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "xcodebuild -downloadPlatform visionOS"):
+                preflight_apple_platforms._preflight_sdk_support(["xros"])
 
 
 class BuildCommandTests(unittest.TestCase):

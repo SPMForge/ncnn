@@ -115,6 +115,16 @@ jobs:
           echo "version=$xcode_version" >> "$GITHUB_OUTPUT"
           echo "version_key=$xcode_version_key" >> "$GITHUB_OUTPUT"
 
+      - name: preflight-apple-platforms
+        run: |
+          preflight_args=()
+          for platform in ${{ matrix.required_platforms }}; do
+            preflight_args+=(--required-platform "$platform")
+          done
+          python3 scripts/spm/preflight_apple_platforms.py \
+            --variant "${{ matrix.variant }}" \
+            "${preflight_args[@]}"
+
       - name: restore-ccache
         uses: actions/cache@v4
         with:

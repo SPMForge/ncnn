@@ -57,7 +57,7 @@ Two GitHub Actions workflows drive the package lifecycle:
   - Owns upstream tag resolution, source export, XCFramework build, manifest rendering, and GitHub Release publication
 - `.github/workflows/validate-apple-release-pipeline.yml`
   - Minimal repo-maintainer CI for this fork
-  - Validates workflow YAML, packaging tests, and real Apple XCFramework builds without publishing
+  - Validates workflow YAML, packaging tests, Apple platform preflight, real XCFramework builds, and the generated package contract without publishing
   - Supports optional manual reruns against a fixed upstream tag
 The repository intentionally does not mirror Tencent/ncnn's full upstream CI matrix. Upstream platform/build coverage remains upstream's responsibility; this repo keeps only the workflows needed to validate and publish the Apple SwiftPM binary distribution contract.
 
@@ -67,9 +67,11 @@ Each workflow:
 2. Resolves the target upstream tag
 3. Exports the exact upstream source snapshot into a temporary worktree
 4. Builds mergeable Apple XCFramework zips with repo-local Python scripts
-5. Validates `MergeableMetadata`, binary paths, required platforms, and `vtool` platform identity
-6. Updates `scripts/spm/current_release.json`
-7. Publishes the release assets from `main` on `SPMForge/ncnn`
+5. Runs `scripts/spm/preflight_apple_platforms.py` so missing Apple platform support fails before long archive jobs start
+6. Validates `MergeableMetadata`, binary paths, required platforms, and `vtool` platform identity
+7. Validates the generated package contract from the same fresh build metadata with `scripts/spm/validate_package_contract.py` or `swift package dump-package`
+8. Updates `scripts/spm/current_release.json`
+9. Publishes the release assets from `main` on `SPMForge/ncnn`
 
 ## Local Maintenance Commands
 
@@ -163,6 +165,62 @@ python3 scripts/spm/validate_mergeable_xcframework.py \
   --require-platform xros \
   --require-platform xros-simulator
 ```
+
+Run the Apple platform preflight used by CI:
+
+```bash
+preflight_args=(
+  --required-platform ios
+  --required-platform ios-simulator
+  --required-platform macos
+  --required-platform ios-maccatalyst
+  --required-platform tvos
+  --required-platform tvos-simulator
+  --required-platform watchos
+  --required-platform watchos-simulator
+  --required-platform xros
+  --required-platform xros-simulator
+)
+python3 scripts/spm/preflight_apple_platforms.py \
+  --variant ncnn \
+  "${preflight_args[@]}"
+```
+
+Validate the generated package contract from fresh artifact metadata:
+
+```bash
+python3 scripts/spm/validate_package_contract.py \
+  --repo-root . \
+  --release-metadata /tmp/ncnn-spm/ncnn/ncnn.release.json \
+  --release-metadata /tmp/ncnn-spm/ncnn_vulkan/ncnn_vulkan.release.json
+```
+
+## CI Cache Topology
+
+- Compiler cache: `ccache`
+- Persisted cache path: `${{ github.workspace }}/.ccache`
+- Persisted with: `actions/cache@v4`
+- Cache key dimensions: runner OS, cache schema version, resolved Xcode version, artifact variant, upstream tag
+- Restore strategy: exact key first, then same Xcode plus same variant, then same Xcode only
+- Not cached by default: `DerivedData`, `ArchiveIntermediates`, or other opaque Xcode build directories
+
+Why this repo uses this shape:
+
+- The expensive part of CI is repeated C and C++ compilation across Apple slices
+- `ccache` is easier to invalidate and reason about than directory-level Xcode caches
+- Wrapper-based compiler injection keeps the cache behavior repo-local and reviewable
+
+What to verify in CI logs:
+
+- `restore-ccache` prints either `Cache restored from key` or `Cache not found`
+- `build-ccache-stats` prints hit and miss counts after a real build
+- `Post restore-ccache` prints either `Cache saved with key` on a cold run or `Cache hit occurred on the primary key` on a warm run
+
+## Validation Safeguards
+
+- Validation CI now checks the generated package contract from the same artifact set that produced the XCFramework zips; PR validation should not wait until the publishing workflow to discover manifest drift.
+- Apple platform support is preflighted before archive work starts; missing `visionOS`, `watchOS`, or other platform support should fail early with an `xcodebuild -downloadPlatform ...` hint instead of failing at the end of a long archive job.
+- Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
 
 ## Consumer Notes
 

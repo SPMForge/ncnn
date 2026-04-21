@@ -87,6 +87,16 @@ jobs:
           echo "version=$xcode_version" >> "$GITHUB_OUTPUT"
           echo "version_key=$xcode_version_key" >> "$GITHUB_OUTPUT"
 
+      - name: preflight-apple-platforms
+        run: |
+          preflight_args=()
+          for platform in ${{ matrix.required_platforms }}; do
+            preflight_args+=(--required-platform "$platform")
+          done
+          python3 scripts/spm/preflight_apple_platforms.py \
+            --variant "${{ matrix.variant }}" \
+            "${preflight_args[@]}"
+
       - name: restore-ccache
         uses: actions/cache@v4
         with:
@@ -149,3 +159,31 @@ jobs:
         if: always()
         run: |
           ccache --show-stats
+
+  package_contract:
+    name: Validate generated package contract
+    needs: build
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: download-cpu-artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: apple-xcframework-validation-ncnn-${{ github.run_id }}
+          path: artifacts/ncnn
+
+      - name: download-vulkan-artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: apple-xcframework-validation-ncnn_vulkan-${{ github.run_id }}
+          path: artifacts/ncnn_vulkan
+
+      - name: validate-generated-package-contract
+        run: |
+          python3 scripts/spm/validate_package_contract.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --release-metadata artifacts/ncnn/ncnn.release.json \
+            --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json
