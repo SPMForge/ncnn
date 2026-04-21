@@ -1,6 +1,49 @@
 {
   "owner": "SPMForge",
   "package_name": "ncnn",
-  "releases": [],
+  "releases": [
+    {
+      "asset_name": "ncnn-20260113-apple.xcframework.zip",
+      "checksum": "5567c2b12123d0484533eaaa463c08b33d57d63d8d3f24be1b4db6f171efde9b",
+      "module_name": "ncnn",
+      "package_tag": "1.0.20260113-alpha.1",
+      "platforms": [
+        "ios",
+        "ios-simulator",
+        "macos",
+        "ios-maccatalyst",
+        "tvos",
+        "tvos-simulator",
+        "watchos",
+        "watchos-simulator",
+        "xros",
+        "xros-simulator"
+      ],
+      "product_name": "NCNN",
+      "target_name": "ncnn",
+      "upstream_tag": "20260113",
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple.xcframework.zip"
+    },
+    {
+      "asset_name": "ncnn-20260113-apple-vulkan.xcframework.zip",
+      "checksum": "163d4c51ac8ccc0a91c3d4acd466186b8da7b44c522c198e214bf9c196136121",
+      "module_name": "ncnn_vulkan",
+      "package_tag": "1.0.20260113-alpha.1",
+      "platforms": [
+        "ios",
+        "ios-simulator",
+        "macos",
+        "ios-maccatalyst",
+        "tvos",
+        "tvos-simulator",
+        "xros",
+        "xros-simulator"
+      ],
+      "product_name": "NCNNVulkan",
+      "target_name": "ncnn_vulkan",
+      "upstream_tag": "20260113",
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple-vulkan.xcframework.zip"
+    }
+  ],
   "repo": "ncnn"
 }
