@@ -421,6 +421,86 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("CODE_SIGNING_REQUIRED=NO", command)
         self.assertIn("CODE_SIGN_STYLE=Manual", command)
 
+    def test_stage_framework_bundle_creates_versioned_macos_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            headers_source = temporary_root / "Headers"
+            headers_source.mkdir()
+            (headers_source / "net.h").write_text("// header")
+            (headers_source / "module.modulemap").write_text("module ncnn { export * }")
+            source_binary = temporary_root / "libncnn.1.dylib"
+            source_binary.write_bytes(b"binary")
+
+            with mock.patch.object(build_apple_xcframework, "_run") as run_mock:
+                framework_path = build_apple_xcframework._stage_framework_bundle(
+                    source_binary=source_binary,
+                    headers_source=headers_source,
+                    output_dir=temporary_root / "staging",
+                    bundle_name="ncnn",
+                    module_name="ncnn",
+                    platform=packaging.CPU_VARIANT.platforms[2],
+                    environment={"PATH": "/usr/bin:/bin"},
+                )
+
+            self.assertEqual(framework_path, temporary_root / "staging" / "ncnn.framework")
+            self.assertTrue((framework_path / "Versions" / "A" / "ncnn").exists())
+            self.assertTrue((framework_path / "Versions" / "Current").is_symlink())
+            self.assertEqual((framework_path / "Versions" / "Current").readlink(), Path("A"))
+            self.assertTrue((framework_path / "ncnn").is_symlink())
+            self.assertEqual((framework_path / "ncnn").readlink(), Path("Versions") / "Current" / "ncnn")
+            self.assertTrue((framework_path / "Headers").is_symlink())
+            self.assertTrue((framework_path / "Modules").is_symlink())
+            self.assertTrue((framework_path / "Resources").is_symlink())
+            self.assertTrue((framework_path / "Versions" / "A" / "Resources" / "Info.plist").exists())
+            self.assertTrue((framework_path / "Versions" / "A" / "Modules" / "module.modulemap").exists())
+            self.assertFalse((framework_path / "Versions" / "A" / "Headers" / "module.modulemap").exists())
+            run_mock.assert_called_once_with(
+                [
+                    "install_name_tool",
+                    "-id",
+                    "@rpath/ncnn.framework/Versions/A/ncnn",
+                    str(framework_path / "Versions" / "A" / "ncnn"),
+                ],
+                env={"PATH": "/usr/bin:/bin"},
+            )
+
+    def test_create_xcframework_accepts_framework_and_library_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            headers_path = temporary_root / "Headers"
+            headers_path.mkdir()
+            staged_library = temporary_root / "libncnn.dylib"
+            staged_library.write_bytes(b"binary")
+            staged_framework = temporary_root / "ncnn.framework"
+            staged_framework.mkdir()
+
+            with mock.patch.object(build_apple_xcframework, "_run") as run_mock:
+                output_path = build_apple_xcframework._create_xcframework(
+                    variant=packaging.CPU_VARIANT,
+                    headers_path=headers_path,
+                    staged_libraries=[staged_library],
+                    staged_frameworks=[staged_framework],
+                    output_dir=temporary_root,
+                    environment={"PATH": "/usr/bin:/bin"},
+                )
+
+            self.assertEqual(output_path, temporary_root / "ncnn.xcframework")
+            run_mock.assert_called_once_with(
+                [
+                    "xcodebuild",
+                    "-create-xcframework",
+                    "-library",
+                    str(staged_library),
+                    "-headers",
+                    str(headers_path),
+                    "-framework",
+                    str(staged_framework),
+                    "-output",
+                    str(temporary_root / "ncnn.xcframework"),
+                ],
+                env={"PATH": "/usr/bin:/bin"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

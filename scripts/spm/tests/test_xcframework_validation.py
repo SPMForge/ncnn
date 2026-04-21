@@ -2,6 +2,7 @@ from pathlib import Path
 import plistlib
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.spm import validate_mergeable_xcframework
 
@@ -26,6 +27,59 @@ class XCFrameworkValidationTests(unittest.TestCase):
             )
         )
         return xcframework_path
+
+    def _write_framework_bundle(
+        self,
+        slice_root: Path,
+        *,
+        framework_name: str,
+        versioned: bool,
+    ) -> Path:
+        framework_root = slice_root / f"{framework_name}.framework"
+        if versioned:
+            active_root = framework_root / "Versions" / "A"
+            (framework_root / "Versions").mkdir(parents=True)
+            active_root.mkdir(parents=True)
+            binary_path = active_root / framework_name
+            headers_path = active_root / "Headers"
+            modules_path = active_root / "Modules"
+            resources_path = active_root / "Resources"
+            for path in (headers_path, modules_path, resources_path):
+                path.mkdir(parents=True)
+            binary_path.write_bytes(b"binary")
+            (resources_path / "Info.plist").write_bytes(plistlib.dumps({"CFBundlePackageType": "FMWK"}))
+            (modules_path / "module.modulemap").write_text(
+                f"""framework module {framework_name} {{
+    umbrella "../Headers"
+    export *
+    module * {{ export * }}
+}}
+"""
+            )
+            (headers_path / "net.h").write_text("// header")
+            (framework_root / "Versions" / "Current").symlink_to("A")
+            (framework_root / framework_name).symlink_to(Path("Versions") / "Current" / framework_name)
+            (framework_root / "Headers").symlink_to(Path("Versions") / "Current" / "Headers")
+            (framework_root / "Modules").symlink_to(Path("Versions") / "Current" / "Modules")
+            (framework_root / "Resources").symlink_to(Path("Versions") / "Current" / "Resources")
+            return framework_root
+
+        framework_root.mkdir(parents=True)
+        (framework_root / framework_name).write_bytes(b"binary")
+        (framework_root / "Headers").mkdir()
+        (framework_root / "Modules").mkdir()
+        (framework_root / "Resources").mkdir()
+        (framework_root / "Resources" / "Info.plist").write_bytes(plistlib.dumps({"CFBundlePackageType": "FMWK"}))
+        (framework_root / "Modules" / "module.modulemap").write_text(
+            f"""framework module {framework_name} {{
+    umbrella "../Headers"
+    export *
+    module * {{ export * }}
+}}
+"""
+        )
+        (framework_root / "Headers" / "net.h").write_text("// header")
+        return framework_root
 
     def test_reports_missing_mergeable_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -71,6 +125,54 @@ class XCFrameworkValidationTests(unittest.TestCase):
             result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["ios", "macos"])
 
             self.assertIn("missing required platform ios", result["issues"])
+
+    def test_reports_non_versioned_macos_framework_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "macos-arm64_x86_64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64", "x86_64"],
+                        "SupportedPlatform": "macos",
+                    }
+                ],
+            )
+            slice_root = xcframework_path / "macos-arm64_x86_64"
+            slice_root.mkdir()
+            self._write_framework_bundle(slice_root, framework_name="ncnn", versioned=False)
+
+            with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
+                result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["macos"])
+
+            self.assertIn("macos: framework bundle must use versioned macOS layout", result["issues"])
+
+    def test_accepts_versioned_macos_framework_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "macos-arm64_x86_64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64", "x86_64"],
+                        "SupportedPlatform": "macos",
+                    }
+                ],
+            )
+            slice_root = xcframework_path / "macos-arm64_x86_64"
+            slice_root.mkdir()
+            self._write_framework_bundle(slice_root, framework_name="ncnn", versioned=True)
+
+            with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
+                result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["macos"])
+
+            self.assertEqual(result["issues"], [])
 
 
 if __name__ == "__main__":

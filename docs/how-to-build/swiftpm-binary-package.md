@@ -38,6 +38,11 @@ Both variants are built with:
 - `NCNN_OPENMP=ON`
 - `NCNN_SIMPLEOMP=ON`
 
+macOS packaging detail:
+
+- The macOS XCFramework slice is wrapped as a native versioned framework bundle.
+- Preserve `Versions/Current`, top-level symlinks, and `Resources/Info.plist`; do not flatten the macOS slice into a bare `.dylib` directory.
+
 The package does not publish standalone `openmp` or `glslang` binary targets.
 
 ## Release Automation
@@ -221,6 +226,7 @@ What to verify in CI logs:
 - Validation CI now checks the generated package contract from the same artifact set that produced the XCFramework zips; PR validation should not wait until the publishing workflow to discover manifest drift.
 - Apple platform support is preflighted before archive work starts; missing `visionOS`, `watchOS`, or other platform support should fail early with an `xcodebuild -downloadPlatform ...` hint instead of failing at the end of a long archive job.
 - Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
+- XCFramework validation rejects a flattened macOS framework slice; the macOS bundle must retain its versioned framework layout.
 
 ## Consumer Notes
 

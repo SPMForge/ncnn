@@ -29,6 +29,53 @@ def command_output(arguments: list[str]) -> str:
     return "\n".join(part for part in [process.stdout, process.stderr] if part).strip()
 
 
+def _is_framework_entry(entry: dict[str, object]) -> bool:
+    library_path = entry.get("LibraryPath")
+    return isinstance(library_path, str) and library_path.endswith(".framework")
+
+
+def _framework_binary_path(framework_path: Path) -> Path:
+    framework_name = framework_path.stem
+    versioned_binary_path = framework_path / "Versions" / "Current" / framework_name
+    if versioned_binary_path.exists():
+        return versioned_binary_path
+    return framework_path / framework_name
+
+
+def _has_versioned_macos_framework_layout(framework_path: Path) -> bool:
+    framework_name = framework_path.stem
+    versions_dir = framework_path / "Versions"
+    current_link = versions_dir / "Current"
+    if not versions_dir.is_dir() or not current_link.is_symlink():
+        return False
+
+    current_root = current_link.resolve()
+    required_paths = [
+        current_root / framework_name,
+        current_root / "Headers",
+        current_root / "Modules",
+        current_root / "Resources",
+        current_root / "Resources" / "Info.plist",
+    ]
+    if not all(path.exists() for path in required_paths):
+        return False
+
+    expected_top_level_targets = {
+        framework_name: current_root / framework_name,
+        "Headers": current_root / "Headers",
+        "Modules": current_root / "Modules",
+        "Resources": current_root / "Resources",
+    }
+    for name, expected_target in expected_top_level_targets.items():
+        top_level_path = framework_path / name
+        if not top_level_path.is_symlink():
+            return False
+        if top_level_path.resolve() != expected_target:
+            return False
+
+    return True
+
+
 def platform_key(entry: dict[str, object]) -> str:
     platform = entry.get("SupportedPlatform")
     variant = entry.get("SupportedPlatformVariant")
@@ -58,21 +105,30 @@ def discover_xcframeworks(raw_paths: list[str]) -> list[Path]:
 
 
 def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str, object]:
+    platform = platform_key(entry)
     library_identifier = entry.get("LibraryIdentifier")
-    binary_name = entry.get("BinaryPath") or entry.get("LibraryPath")
-    binary_path = (
-        xcframework_path / str(library_identifier) / str(binary_name)
-        if isinstance(library_identifier, str) and isinstance(binary_name, str)
-        else None
-    )
+    binary_path = None
+    framework_path = None
+    if isinstance(library_identifier, str):
+        if _is_framework_entry(entry):
+            framework_path = xcframework_path / library_identifier / str(entry["LibraryPath"])
+            binary_path = _framework_binary_path(framework_path)
+        else:
+            binary_name = entry.get("BinaryPath") or entry.get("LibraryPath")
+            if isinstance(binary_name, str):
+                binary_path = xcframework_path / library_identifier / binary_name
 
     result = {
-        "platform": platform_key(entry),
+        "platform": platform,
         "architectures": entry.get("SupportedArchitectures") or [],
         "mergeable_metadata": entry.get("MergeableMetadata") is True,
         "binary_path": str(binary_path) if binary_path is not None else None,
         "binary_exists": bool(binary_path and binary_path.exists()),
     }
+    if framework_path is not None:
+        result["framework_path"] = str(framework_path)
+        result["framework_exists"] = framework_path.exists()
+        result["framework_versioned_layout"] = platform == "macos" and _has_versioned_macos_framework_layout(framework_path)
 
     if binary_path is not None and binary_path.exists() and shutil.which("xcrun"):
         try:
@@ -112,6 +168,8 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
             issues.append(f"{platform}: missing MergeableMetadata")
         if not entry["binary_exists"]:
             issues.append(f"{platform}: missing binary at declared path")
+        if platform == "macos" and "framework_path" in entry and not entry.get("framework_versioned_layout", False):
+            issues.append(f"{platform}: framework bundle must use versioned macOS layout")
 
         expected_vtool_platform = EXPECTED_VTOOL_PLATFORMS.get(platform)
         if expected_vtool_platform is None:
