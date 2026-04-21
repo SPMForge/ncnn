@@ -81,6 +81,9 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("uses: actions/cache@v4", build_job)
         self.assertIn("path: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("CCACHE_DIR: ${{ github.workspace }}/.ccache", build_job)
+        self.assertIn("resolve-xcode-version", build_job)
+        self.assertIn("ccache-v2", build_job)
+        self.assertIn("steps.xcode.outputs.version_key", build_job)
         self.assertIn("build-ccache-stats", build_job)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
@@ -101,6 +104,9 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("uses: actions/cache@v4", build_job)
         self.assertIn("path: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("CCACHE_DIR: ${{ github.workspace }}/.ccache", build_job)
+        self.assertIn("resolve-xcode-version", build_job)
+        self.assertIn("ccache-v2", build_job)
+        self.assertIn("steps.xcode.outputs.version_key", build_job)
         self.assertIn("build-ccache-stats", build_job)
 
     def test_readme_describes_wrapper_repo_only(self) -> None:

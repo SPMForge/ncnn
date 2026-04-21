@@ -79,14 +79,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: resolve-xcode-version
+        id: xcode
+        run: |
+          xcode_version="$(xcodebuild -version | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/ $//')"
+          xcode_version_key="$(printf '%s' "$xcode_version" | tr ' ' '-' | tr -cd '[:alnum:]-._')"
+          echo "version=$xcode_version" >> "$GITHUB_OUTPUT"
+          echo "version_key=$xcode_version_key" >> "$GITHUB_OUTPUT"
+
       - name: restore-ccache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'toolchains/ios.toolchain.cmake', 'scripts/spm/platforms.json') }}
+          key: ${{ runner.os }}-ccache-v2-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}
           restore-keys: |
-            ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
-            ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-
+            ${{ runner.os }}-ccache-v2-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
+            ${{ runner.os }}-ccache-v2-${{ steps.xcode.outputs.version_key }}-
 
       - name: install-ccache
         run: |
@@ -97,6 +105,7 @@ jobs:
 
       - name: reset-ccache-stats
         run: |
+          mkdir -p "$CCACHE_DIR"
           ccache --zero-stats
 
       - name: fetch-upstream-tags

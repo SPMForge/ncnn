@@ -264,35 +264,56 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_cmake_configure_disables_code_signing_for_generated_xcode_project(self) -> None:
-        with mock.patch.object(build_apple_xcframework, "_compiler_launcher_flags", return_value=[]):
-            command = build_apple_xcframework._cmake_configure_command(
-                packaging.CPU_VARIANT,
-                packaging.CPU_VARIANT.platforms[0],
-                source_root=Path("/tmp/source"),
-                build_dir=Path("/tmp/build"),
-                install_dir=Path("/tmp/install"),
-            )
+        command = build_apple_xcframework._cmake_configure_command(
+            packaging.CPU_VARIANT,
+            packaging.CPU_VARIANT.platforms[0],
+            source_root=Path("/tmp/source"),
+            build_dir=Path("/tmp/build"),
+            install_dir=Path("/tmp/install"),
+        )
 
         self.assertIn("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO", command)
         self.assertIn("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO", command)
         self.assertIn("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Manual", command)
 
-    def test_cmake_configure_uses_ccache_launcher_when_available(self) -> None:
-        with mock.patch.object(
-            build_apple_xcframework,
-            "_compiler_launcher_flags",
-            return_value=["-DCMAKE_C_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache"],
-        ):
-            command = build_apple_xcframework._cmake_configure_command(
-                packaging.CPU_VARIANT,
-                packaging.CPU_VARIANT.platforms[0],
-                source_root=Path("/tmp/source"),
-                build_dir=Path("/tmp/build"),
-                install_dir=Path("/tmp/install"),
-            )
+    def test_cmake_configure_does_not_use_compiler_launcher_flags(self) -> None:
+        command = build_apple_xcframework._cmake_configure_command(
+            packaging.CPU_VARIANT,
+            packaging.CPU_VARIANT.platforms[0],
+            source_root=Path("/tmp/source"),
+            build_dir=Path("/tmp/build"),
+            install_dir=Path("/tmp/install"),
+        )
 
-        self.assertIn("-DCMAKE_C_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache", command)
-        self.assertIn("-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache", command)
+        self.assertNotIn("-DCMAKE_C_COMPILER_LAUNCHER=ccache", command)
+        self.assertNotIn("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", command)
+
+    def test_compiler_cache_environment_uses_wrapper_binaries_when_ccache_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            wrapper_root = Path(temporary_directory)
+            environment = {
+                "CCACHE_DIR": str(wrapper_root / ".ccache"),
+                "PATH": "/usr/bin:/bin",
+            }
+
+            with (
+                mock.patch("scripts.spm.build_apple_xcframework.shutil.which", return_value="/opt/homebrew/bin/ccache"),
+                mock.patch.object(
+                    build_apple_xcframework,
+                    "_capture_output",
+                    side_effect=["/usr/bin/clang", "/usr/bin/clang++"],
+                ),
+            ):
+                cached_environment = build_apple_xcframework._compiler_cache_environment(environment, wrapper_root)
+
+            self.assertEqual(cached_environment["CC"], str(wrapper_root / ".compiler-wrappers" / "clang"))
+            self.assertEqual(cached_environment["CXX"], str(wrapper_root / ".compiler-wrappers" / "clang++"))
+            self.assertEqual(cached_environment["OBJC"], str(wrapper_root / ".compiler-wrappers" / "clang"))
+            self.assertEqual(cached_environment["OBJCXX"], str(wrapper_root / ".compiler-wrappers" / "clang++"))
+            self.assertEqual(cached_environment["LDPLUSPLUS"], str(wrapper_root / ".compiler-wrappers" / "clang++"))
+            self.assertTrue((wrapper_root / ".ccache").exists())
+            self.assertTrue((wrapper_root / ".compiler-wrappers" / "clang").exists())
+            self.assertIn('exec "/opt/homebrew/bin/ccache" "/usr/bin/clang" "$@"', (wrapper_root / ".compiler-wrappers" / "clang").read_text())
 
     def test_cmake_build_install_disables_code_signing(self) -> None:
         command = build_apple_xcframework._build_command(Path("/tmp/build"))

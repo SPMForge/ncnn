@@ -44,14 +44,43 @@ def _base_environment(arguments: argparse.Namespace) -> dict[str, str]:
     return environment
 
 
-def _compiler_launcher_flags() -> list[str]:
+def _write_compiler_wrapper(wrapper_path: Path, ccache_path: str, compiler_path: str) -> None:
+    wrapper_path.write_text(
+        "#!/bin/sh\n"
+        f'exec "{ccache_path}" "{compiler_path}" "$@"\n'
+    )
+    wrapper_path.chmod(0o755)
+
+
+def _compiler_cache_environment(environment: dict[str, str], workspace_root: Path) -> dict[str, str]:
     ccache_path = os.environ.get("CCACHE_BIN") or shutil.which("ccache")
     if not ccache_path:
-        return []
-    return [
-        f"-DCMAKE_C_COMPILER_LAUNCHER={ccache_path}",
-        f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache_path}",
-    ]
+        return environment
+
+    ccache_dir = environment.get("CCACHE_DIR")
+    if ccache_dir:
+        Path(ccache_dir).mkdir(parents=True, exist_ok=True)
+
+    wrapper_root = workspace_root / ".compiler-wrappers"
+    if wrapper_root.exists():
+        shutil.rmtree(wrapper_root)
+    wrapper_root.mkdir(parents=True)
+
+    clang_path = _capture_output(["xcrun", "-f", "clang"], env=environment)
+    clangxx_path = _capture_output(["xcrun", "-f", "clang++"], env=environment)
+
+    clang_wrapper = wrapper_root / "clang"
+    clangxx_wrapper = wrapper_root / "clang++"
+    _write_compiler_wrapper(clang_wrapper, ccache_path, clang_path)
+    _write_compiler_wrapper(clangxx_wrapper, ccache_path, clangxx_path)
+
+    cached_environment = dict(environment)
+    cached_environment["CC"] = str(clang_wrapper)
+    cached_environment["CXX"] = str(clangxx_wrapper)
+    cached_environment["OBJC"] = str(clang_wrapper)
+    cached_environment["OBJCXX"] = str(clangxx_wrapper)
+    cached_environment["LDPLUSPLUS"] = str(clangxx_wrapper)
+    return cached_environment
 
 
 def _cmake_configure_command(
@@ -85,7 +114,6 @@ def _cmake_configure_command(
         "-DNCNN_BUILD_BENCHMARK=OFF",
         "-DNCNN_BUILD_TESTS=OFF",
         "-DNCNN_INSTALL_SDK=ON",
-        *_compiler_launcher_flags(),
     ]
 
     if variant is packaging.VULKAN_VARIANT:
@@ -295,6 +323,7 @@ def main() -> int:
     if workspace_root.exists():
         shutil.rmtree(workspace_root)
     workspace_root.mkdir(parents=True)
+    environment = _compiler_cache_environment(environment, workspace_root)
 
     staged_libraries = []
     headers_path: Path | None = None
