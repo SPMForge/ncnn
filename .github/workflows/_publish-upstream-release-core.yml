@@ -98,7 +98,7 @@ jobs:
             required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator xros xros-simulator
     runs-on: macos-15
     env:
-      CCACHE_DIR: ~/.ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
@@ -110,7 +110,7 @@ jobs:
       - name: restore-ccache
         uses: actions/cache@v4
         with:
-          path: ~/.ccache
+          path: ${{ github.workspace }}/.ccache
           key: ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'toolchains/ios.toolchain.cmake', 'scripts/spm/platforms.json') }}
           restore-keys: |
             ${{ runner.os }}-macos15-ccache-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-
