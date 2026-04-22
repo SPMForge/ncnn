@@ -65,6 +65,17 @@ def _rev_parse(repo_root: Path, ref_name: str) -> str:
     return process.stdout.strip()
 
 
+def _ref_exists(repo_root: Path, ref_name: str) -> bool:
+    process = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref_name],
+        check=False,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return process.returncode == 0
+
+
 def _resolve_upstream_tag(arguments: argparse.Namespace) -> str:
     if arguments.explicit_tag:
         packaging.package_tag_for_upstream_tag(arguments.explicit_tag)
@@ -112,13 +123,27 @@ def main() -> int:
     arguments = _parse_arguments()
     upstream_tag = _resolve_upstream_tag(arguments)
     package_tag = _resolve_package_tag(arguments, upstream_tag)
+    tag_ref = f"refs/tags/{package_tag}"
+    remote_tag_exists = _ref_exists(arguments.repo_root, tag_ref)
+    remote_tag_commit = _rev_parse(arguments.repo_root, tag_ref) if remote_tag_exists else ""
 
     if arguments.github_output is not None:
         with arguments.github_output.open("a") as output_file:
             output_file.write(f"upstream_tag={upstream_tag}\n")
             output_file.write(f"package_tag={package_tag}\n")
+            output_file.write(f"remote_tag_exists={str(remote_tag_exists).lower()}\n")
+            output_file.write(f"remote_tag_commit={remote_tag_commit}\n")
 
-    print(json.dumps({"upstream_tag": upstream_tag, "package_tag": package_tag}))
+    print(
+        json.dumps(
+            {
+                "upstream_tag": upstream_tag,
+                "package_tag": package_tag,
+                "remote_tag_exists": remote_tag_exists,
+                "remote_tag_commit": remote_tag_commit,
+            }
+        )
+    )
     return 0
 
 

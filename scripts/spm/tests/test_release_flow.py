@@ -163,6 +163,8 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 {
                     "upstream_tag": "20260113",
                     "package_tag": packaging.package_tag_for_upstream_tag("20260113"),
+                    "remote_tag_exists": False,
+                    "remote_tag_commit": "",
                 },
             )
 
@@ -179,6 +181,14 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 {
                     "upstream_tag": "20260113",
                     "package_tag": "1.0.20260113-alpha.1",
+                    "remote_tag_exists": True,
+                    "remote_tag_commit": subprocess.run(
+                        ["git", "rev-parse", "refs/tags/1.0.20260113-alpha.1^{commit}"],
+                        cwd=repo_root,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip(),
                 },
             )
 
@@ -196,6 +206,8 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 {
                     "upstream_tag": "20260113",
                     "package_tag": "1.0.20260113-alpha.2",
+                    "remote_tag_exists": False,
+                    "remote_tag_commit": "",
                 },
             )
 
@@ -213,6 +225,8 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 {
                     "upstream_tag": "20260113",
                     "package_tag": "1.0.20260113-alpha.3",
+                    "remote_tag_exists": False,
+                    "remote_tag_commit": "",
                 },
             )
 
@@ -229,8 +243,40 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 {
                     "upstream_tag": "20260113",
                     "package_tag": "1.0.20260113",
+                    "remote_tag_exists": False,
+                    "remote_tag_commit": "",
                 },
             )
+
+    def test_writes_remote_tag_outputs_for_existing_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            subprocess.run(["git", "tag", "1.0.20260113-alpha.1"], cwd=repo_root, check=True, capture_output=True, text=True)
+            output_path = repo_root / "github-output.txt"
+
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SELECT_UPSTREAM_TAG_SCRIPT),
+                    "--repo-root",
+                    str(repo_root),
+                    "--explicit-tag",
+                    "20260113",
+                    "--github-output",
+                    str(output_path),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            payload = json.loads(process.stdout)
+            output_body = output_path.read_text()
+            self.assertTrue(payload["remote_tag_exists"])
+            self.assertIn("remote_tag_exists=true", output_body)
+            self.assertIn(f"remote_tag_commit={payload['remote_tag_commit']}", output_body)
 
 
 if __name__ == "__main__":
