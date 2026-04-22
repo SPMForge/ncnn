@@ -20,12 +20,12 @@ let package = Package(
         .binaryTarget(
             name: "ncnn",
             url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple.xcframework.zip",
-            checksum: "579d9437e2d8995ab0907c44413b74e60b6599cdfcf6e741dd8ed03095fac6ae"
+            checksum: "4b00d79aae495bf71e3580605e82b31d4869b7770b74b5562d662dc8cb6a2875"
         ),
         .binaryTarget(
             name: "ncnn_vulkan",
             url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple-vulkan.xcframework.zip",
-            checksum: "0894e63dd52b7d5f48eeed233a7922aaf7e57d9b9c9ed2d2353e8be49b705a40"
+            checksum: "77736e5e680ea3e1fcda9e7e96ace2152b74c3b9d0165d6740d70832595d0eb7"
         ),
     ]
 )
