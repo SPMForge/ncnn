@@ -12,6 +12,7 @@ from scripts.spm import build_apple_xcframework
 from scripts.spm import preflight_apple_platforms
 from scripts.spm import render_package
 from scripts.spm import validate_package_contract
+from scripts.spm import verify_sop_conformance
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -460,6 +461,28 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "xcodebuild -downloadPlatform visionOS"):
                 preflight_apple_platforms._preflight_sdk_support(["xros"])
+
+
+class SopConformanceTests(unittest.TestCase):
+    def test_rejects_hardcoded_deployment_targets_in_production_scripts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            repo_root = temporary_root / "repo"
+            target_dir = repo_root / "scripts" / "spm"
+            target_dir.mkdir(parents=True)
+            shutil.copy2(PLATFORM_METADATA_PATH, target_dir / "platforms.json")
+
+            hardcoded_script = target_dir / "build_apple_xcframework.py"
+            hardcoded_script.write_text('command.append("-DDEPLOYMENT_TARGET=13.0")\n')
+
+            with self.assertRaisesRegex(
+                SystemExit,
+                "must stay centralized in scripts/spm/platforms.json",
+            ):
+                verify_sop_conformance._assert_no_hardcoded_deployment_targets(
+                    repo_root,
+                    (hardcoded_script,),
+                )
 
 
 class BuildCommandTests(unittest.TestCase):

@@ -2,11 +2,21 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+PRODUCTION_SCRIPT_PATHS = tuple(sorted((REPO_ROOT / "scripts" / "spm").glob("*.py")))
+PRODUCTION_WORKFLOW_PATHS = (
+    REPO_ROOT / ".github" / "workflows" / "_publish-upstream-release-core.yml",
+    REPO_ROOT / ".github" / "workflows" / "validate-apple-release-pipeline.yml",
+)
+_DEPLOYMENT_TARGET_CONTEXT_PATTERN = re.compile(
+    r"(deployment_target|Platform\(|\.iOS\(|\.macOS\(|\.macCatalyst\(|\.tvOS\(|\.watchOS\(|\.visionOS\()",
+    re.IGNORECASE,
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -19,8 +29,36 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def main() -> int:
-    workflow_names = sorted(path.name for path in WORKFLOWS_DIR.glob("*.yml"))
+def _load_platform_deployment_targets(repo_root: Path) -> dict[str, str]:
+    payload = json.loads(read_text(repo_root / "scripts" / "spm" / "platforms.json"))
+    package_platforms = payload.get("package_platforms")
+    require(
+        isinstance(package_platforms, dict),
+        f"invalid platform metadata in {repo_root / 'scripts' / 'spm' / 'platforms.json'}",
+    )
+    return {str(key): str(value) for key, value in package_platforms.items()}
+
+
+def _assert_no_hardcoded_deployment_targets(repo_root: Path, file_paths: tuple[Path, ...]) -> None:
+    deployment_targets = sorted(set(_load_platform_deployment_targets(repo_root).values()))
+    for path in file_paths:
+        contents = read_text(path)
+        for deployment_target in deployment_targets:
+            literal_pattern = re.compile(rf"(?<![0-9A-Za-z]){re.escape(deployment_target)}(?![0-9A-Za-z])")
+            for line in contents.splitlines():
+                if not literal_pattern.search(line):
+                    continue
+                require(
+                    _DEPLOYMENT_TARGET_CONTEXT_PATTERN.search(line) is None,
+                    "deployment target "
+                    f"{deployment_target} must stay centralized in scripts/spm/platforms.json; "
+                    f"found hardcoded value in {path}",
+                )
+
+
+def main(repo_root: Path = REPO_ROOT) -> int:
+    workflows_dir = repo_root / ".github" / "workflows"
+    workflow_names = sorted(path.name for path in workflows_dir.glob("*.yml"))
     require(
         workflow_names
         == [
@@ -32,10 +70,10 @@ def main() -> int:
         f"unexpected workflow set: {workflow_names}",
     )
 
-    readme = read_text(REPO_ROOT / "README.md")
-    core_workflow = read_text(WORKFLOWS_DIR / "_publish-upstream-release-core.yml")
-    validate_workflow = read_text(WORKFLOWS_DIR / "validate-apple-release-pipeline.yml")
-    package_swift = read_text(REPO_ROOT / "Package.swift")
+    readme = read_text(repo_root / "README.md")
+    core_workflow = read_text(workflows_dir / "_publish-upstream-release-core.yml")
+    validate_workflow = read_text(workflows_dir / "validate-apple-release-pipeline.yml")
+    package_swift = read_text(repo_root / "Package.swift")
 
     require("wrapper repository" in readme, "README must describe the repo as a wrapper repository")
     require("refs/upstream-tags/*" in readme, "README must document refs/upstream-tags/*")
@@ -44,18 +82,25 @@ def main() -> int:
     require("gh release upload" in core_workflow, "publish core must support repair uploads")
     require("gh api --method PATCH" in core_workflow, "publish core must normalize release metadata")
     require("DEVELOPER_DIR:" not in core_workflow, "publish core must not hardcode DEVELOPER_DIR")
-    require("push:" in validate_workflow and "pull_request:" in validate_workflow, "validation workflow must run on push and pull_request")
+    require(
+        "push:" in validate_workflow and "pull_request:" in validate_workflow,
+        "validation workflow must run on push and pull_request",
+    )
     require("DEVELOPER_DIR:" not in validate_workflow, "validation workflow must not hardcode DEVELOPER_DIR")
     require('path: "Artifacts/' not in package_swift, "committed Package.swift must not use repo-local artifact paths")
     require("FileManager.default.fileExists" not in package_swift, "committed Package.swift must not switch on local checkout state")
+    _assert_no_hardcoded_deployment_targets(
+        repo_root,
+        PRODUCTION_SCRIPT_PATHS + PRODUCTION_WORKFLOW_PATHS,
+    )
 
-    source_acquisition = json.loads(read_text(REPO_ROOT / "scripts" / "spm" / "source_acquisition.json"))
+    source_acquisition = json.loads(read_text(repo_root / "scripts" / "spm" / "source_acquisition.json"))
     require(
         source_acquisition.get("upstream_tag_ref_prefix") == "refs/upstream-tags",
         "source acquisition contract must fetch into refs/upstream-tags",
     )
-    require((REPO_ROOT / "scripts" / "spm" / "platforms.json").exists(), "platform metadata must exist")
-    require((REPO_ROOT / "scripts" / "spm" / "current_release.json").exists(), "release metadata must exist")
+    require((repo_root / "scripts" / "spm" / "platforms.json").exists(), "platform metadata must exist")
+    require((repo_root / "scripts" / "spm" / "current_release.json").exists(), "release metadata must exist")
 
     print("ncnn SOP conformance verified")
     return 0
