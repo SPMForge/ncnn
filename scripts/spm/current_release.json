@@ -4,7 +4,7 @@
   "releases": [
     {
       "asset_name": "ncnn-20260113-apple.xcframework.zip",
-      "checksum": "5567c2b12123d0484533eaaa463c08b33d57d63d8d3f24be1b4db6f171efde9b",
+      "checksum": "579d9437e2d8995ab0907c44413b74e60b6599cdfcf6e741dd8ed03095fac6ae",
       "module_name": "ncnn",
       "package_tag": "1.0.20260113-alpha.1",
       "platforms": [
@@ -26,7 +26,7 @@
     },
     {
       "asset_name": "ncnn-20260113-apple-vulkan.xcframework.zip",
-      "checksum": "163d4c51ac8ccc0a91c3d4acd466186b8da7b44c522c198e214bf9c196136121",
+      "checksum": "0894e63dd52b7d5f48eeed233a7922aaf7e57d9b9c9ed2d2353e8be49b705a40",
       "module_name": "ncnn_vulkan",
       "package_tag": "1.0.20260113-alpha.1",
       "platforms": [
