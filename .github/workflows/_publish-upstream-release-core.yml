@@ -162,6 +162,7 @@ jobs:
           python3 scripts/spm/build_apple_xcframework.py \
             --variant "${{ matrix.variant }}" \
             --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" \
+            --package-tag "${{ needs.resolve.outputs.package_tag }}" \
             --source-root "$RUNNER_TEMP/upstream-source" \
             --output-dir "$RUNNER_TEMP/spm-artifacts"
 

@@ -1,3 +1,4 @@
+import argparse
 import json
 from pathlib import Path
 import shutil
@@ -462,6 +463,19 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
 
 
 class BuildCommandTests(unittest.TestCase):
+    def test_resolve_package_tag_prefers_explicit_value(self) -> None:
+        arguments = argparse.Namespace(upstream_tag="20260113", package_tag="1.0.20260113-alpha.2")
+
+        self.assertEqual(build_apple_xcframework._resolve_package_tag(arguments), "1.0.20260113-alpha.2")
+
+    def test_resolve_package_tag_defaults_to_alpha_1_when_no_override_is_provided(self) -> None:
+        arguments = argparse.Namespace(upstream_tag="20260113", package_tag=None)
+
+        self.assertEqual(
+            build_apple_xcframework._resolve_package_tag(arguments),
+            "1.0.20260113-alpha.1",
+        )
+
     def test_watchos_arm64_32_slice_skips_install_name_rewrite(self) -> None:
         self.assertFalse(
             build_apple_xcframework._should_rewrite_install_name(

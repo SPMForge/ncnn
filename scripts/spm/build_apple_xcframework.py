@@ -27,6 +27,7 @@ def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a mergeable Apple XCFramework for ncnn.")
     parser.add_argument("--variant", required=True, choices=sorted(packaging.VARIANTS_BY_TARGET))
     parser.add_argument("--upstream-tag", required=True)
+    parser.add_argument("--package-tag", help="Optional resolved package tag override for release metadata.")
     parser.add_argument("--source-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--developer-dir", help="Optional Xcode developer dir override.")
@@ -48,6 +49,12 @@ def _base_environment(arguments: argparse.Namespace) -> dict[str, str]:
     if arguments.developer_dir:
         environment["DEVELOPER_DIR"] = arguments.developer_dir
     return environment
+
+
+def _resolve_package_tag(arguments: argparse.Namespace) -> str:
+    if arguments.package_tag:
+        return arguments.package_tag
+    return packaging.package_tag_for_upstream_tag(arguments.upstream_tag)
 
 
 def _write_compiler_wrapper(wrapper_path: Path, ccache_path: str, compiler_path: str) -> None:
@@ -444,7 +451,7 @@ def main() -> int:
     environment = _base_environment(arguments)
     source_root = arguments.source_root.resolve()
     variant = packaging.variant_for_target_name(arguments.variant)
-    package_tag = packaging.package_tag_for_upstream_tag(arguments.upstream_tag)
+    package_tag = _resolve_package_tag(arguments)
 
     if variant is packaging.VULKAN_VARIANT:
         _ensure_vulkan_sources(source_root)

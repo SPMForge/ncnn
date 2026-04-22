@@ -26,6 +26,7 @@ jobs:
     name: Validate release pipeline
     runs-on: ubuntu-latest
     outputs:
+      package_tag: ${{ steps.resolve.outputs.package_tag }}
       upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
     steps:
       - uses: actions/checkout@v6
@@ -134,6 +135,7 @@ jobs:
           python3 scripts/spm/build_apple_xcframework.py \
             --variant "${{ matrix.variant }}" \
             --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
+            --package-tag "${{ needs.verify.outputs.package_tag }}" \
             --source-root "$RUNNER_TEMP/upstream-source" \
             --output-dir "$RUNNER_TEMP/spm-artifacts"
 
