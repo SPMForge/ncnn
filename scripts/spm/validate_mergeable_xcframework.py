@@ -8,6 +8,8 @@ import plistlib
 import re
 import shutil
 import subprocess
+import tempfile
+import zipfile
 
 
 EXPECTED_VTOOL_PLATFORMS = {
@@ -40,6 +42,31 @@ def _framework_binary_path(framework_path: Path) -> Path:
     if versioned_binary_path.exists():
         return versioned_binary_path
     return framework_path / framework_name
+
+
+def _framework_active_root(framework_path: Path) -> Path:
+    versioned_root = framework_path / "Versions" / "Current"
+    if versioned_root.exists():
+        return versioned_root.resolve()
+    return framework_path
+
+
+def _framework_has_public_headers(headers_path: Path) -> bool:
+    if not headers_path.is_dir():
+        return False
+    return any(path.is_file() for path in headers_path.rglob("*"))
+
+
+def _framework_interface_issues(framework_path: Path) -> list[str]:
+    active_root = _framework_active_root(framework_path)
+    issues: list[str] = []
+    headers_path = active_root / "Headers"
+    module_map_path = active_root / "Modules" / "module.modulemap"
+    if not _framework_has_public_headers(headers_path):
+        issues.append("framework bundle missing public headers")
+    if not module_map_path.is_file():
+        issues.append("framework bundle missing Modules/module.modulemap")
+    return issues
 
 
 def _has_versioned_macos_framework_layout(framework_path: Path) -> bool:
@@ -98,10 +125,29 @@ def discover_xcframeworks(raw_paths: list[str]) -> list[Path]:
         if path.is_dir():
             results.extend(sorted(child for child in path.glob("*.xcframework") if child.is_dir()))
             continue
+        if path.is_file() and path.name.endswith(".xcframework.zip"):
+            results.append(path)
+            continue
         raise SystemExit(f"unsupported path: {path}")
     if not results:
         raise SystemExit("no xcframeworks found")
     return results
+
+
+def _archive_root_xcframework_names(zip_path: Path) -> list[str]:
+    with zipfile.ZipFile(zip_path) as archive:
+        names = archive.namelist()
+    return sorted({Path(name).parts[0] for name in names if Path(name).parts and Path(name).parts[0].endswith(".xcframework")})
+
+
+def _extract_archive(zip_path: Path, destination_dir: Path) -> None:
+    if shutil.which("ditto"):
+        subprocess.run(["ditto", "-x", "-k", str(zip_path), str(destination_dir)], check=True)
+        return
+    if shutil.which("unzip"):
+        subprocess.run(["unzip", "-q", str(zip_path), "-d", str(destination_dir)], check=True)
+        return
+    raise SystemExit("no supported archive extractor found; install ditto or unzip")
 
 
 def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str, object]:
@@ -129,6 +175,8 @@ def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str,
         result["framework_path"] = str(framework_path)
         result["framework_exists"] = framework_path.exists()
         result["framework_versioned_layout"] = platform == "macos" and _has_versioned_macos_framework_layout(framework_path)
+        if framework_path.exists():
+            result["framework_interface_issues"] = _framework_interface_issues(framework_path)
 
     if binary_path is not None and binary_path.exists() and shutil.which("xcrun"):
         try:
@@ -168,8 +216,15 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
             issues.append(f"{platform}: missing MergeableMetadata")
         if not entry["binary_exists"]:
             issues.append(f"{platform}: missing binary at declared path")
-        if platform == "macos" and "framework_path" in entry and not entry.get("framework_versioned_layout", False):
-            issues.append(f"{platform}: framework bundle must use versioned macOS layout")
+        if "framework_path" not in entry:
+            issues.append(f"{platform}: binary distribution slice must be a framework bundle")
+        else:
+            if not entry.get("framework_exists", False):
+                issues.append(f"{platform}: missing framework bundle at declared path")
+            if platform == "macos" and not entry.get("framework_versioned_layout", False):
+                issues.append(f"{platform}: framework bundle must use versioned macOS layout")
+            for framework_issue in entry.get("framework_interface_issues", []):
+                issues.append(f"{platform}: {framework_issue}")
 
         expected_vtool_platform = EXPECTED_VTOOL_PLATFORMS.get(platform)
         if expected_vtool_platform is None:
@@ -194,6 +249,27 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
 
 
 def validate_xcframework(xcframework_path: Path, required_platforms: list[str]) -> dict[str, object]:
+    if xcframework_path.is_file():
+        root_xcframeworks = _archive_root_xcframework_names(xcframework_path)
+        issues: list[str] = []
+        if len(root_xcframeworks) != 1:
+            return {
+                "xcframework": str(xcframework_path),
+                "issues": ["archive must place exactly one .xcframework at the zip root"],
+                "entries": [],
+            }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            _extract_archive(xcframework_path, temporary_root)
+            extracted_xcframework = temporary_root / root_xcframeworks[0]
+            result = inspect_xcframework(extracted_xcframework)
+        available_platforms = sorted(str(entry["platform"]) for entry in result["entries"])
+        missing_platforms = sorted(set(required_platforms) - set(available_platforms))
+        if missing_platforms:
+            result["issues"].extend(f"missing required platform {platform}" for platform in missing_platforms)
+        result["xcframework"] = str(xcframework_path)
+        return result
+
     result = inspect_xcframework(xcframework_path)
     available_platforms = sorted(str(entry["platform"]) for entry in result["entries"])
     missing_platforms = sorted(set(required_platforms) - set(available_platforms))
@@ -203,8 +279,8 @@ def validate_xcframework(xcframework_path: Path, required_platforms: list[str]) 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate mergeable XCFramework metadata, binaries, and platform identity.")
-    parser.add_argument("paths", nargs="+", help="XCFramework paths or directories containing XCFrameworks.")
+    parser = argparse.ArgumentParser(description="Validate mergeable XCFramework archives, framework layout, and platform identity.")
+    parser.add_argument("paths", nargs="+", help="XCFramework directories, XCFramework zip archives, or directories containing XCFrameworks.")
     parser.add_argument(
         "--require-platform",
         action="append",

@@ -3,11 +3,18 @@ import plistlib
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 from scripts.spm import validate_mergeable_xcframework
 
 
 class XCFrameworkValidationTests(unittest.TestCase):
+    @staticmethod
+    def _which_without_xcrun(command: str) -> str | None:
+        if command == "xcrun":
+            return None
+        return f"/usr/bin/{command}"
+
     def _write_xcframework(
         self,
         root: Path,
@@ -80,6 +87,26 @@ class XCFrameworkValidationTests(unittest.TestCase):
         )
         (framework_root / "Headers" / "net.h").write_text("// header")
         return framework_root
+
+    def _write_legacy_dylib_slice(self, slice_root: Path, *, dylib_name: str) -> None:
+        slice_root.mkdir(parents=True)
+        (slice_root / dylib_name).write_bytes(b"binary")
+        headers_path = slice_root / "Headers"
+        headers_path.mkdir()
+        (headers_path / "net.h").write_text("// header")
+        (headers_path / "module.modulemap").write_text(
+            """module ncnn {
+    umbrella "."
+    export *
+    module * { export * }
+}
+"""
+        )
+
+    def _write_zip_from_directory(self, source_root: Path, zip_path: Path) -> None:
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            for path in sorted(source_root.rglob("*")):
+                archive.write(path, path.relative_to(source_root))
 
     def test_reports_missing_mergeable_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -171,6 +198,115 @@ class XCFrameworkValidationTests(unittest.TestCase):
 
             with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
                 result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["macos"])
+
+            self.assertEqual(result["issues"], [])
+
+    def test_reports_legacy_dylib_distribution_slice(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64",
+                        "BinaryPath": "libncnn.dylib",
+                        "LibraryPath": "libncnn.dylib",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "ios",
+                    }
+                ],
+            )
+            self._write_legacy_dylib_slice(xcframework_path / "ios-arm64", dylib_name="libncnn.dylib")
+
+            with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
+                result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["ios"])
+
+            self.assertIn("ios: binary distribution slice must be a framework bundle", result["issues"])
+
+    def test_reports_framework_missing_interface_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "ios",
+                    }
+                ],
+            )
+            framework_root = self._write_framework_bundle(
+                xcframework_path / "ios-arm64",
+                framework_name="ncnn",
+                versioned=False,
+            )
+            (framework_root / "Headers" / "net.h").unlink()
+            (framework_root / "Modules" / "module.modulemap").unlink()
+
+            with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
+                result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["ios"])
+
+            self.assertIn("ios: framework bundle missing public headers", result["issues"])
+            self.assertIn("ios: framework bundle missing Modules/module.modulemap", result["issues"])
+
+    def test_reports_archive_without_root_xcframework(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            archive_root = temporary_root / "payload"
+            nested_root = archive_root / "wrapper"
+            xcframework_path = self._write_xcframework(
+                nested_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "ios",
+                    }
+                ],
+            )
+            self._write_framework_bundle(xcframework_path / "ios-arm64", framework_name="ncnn", versioned=False)
+            zip_path = temporary_root / "ncnn.xcframework.zip"
+            self._write_zip_from_directory(archive_root, zip_path)
+
+            with mock.patch(
+                "scripts.spm.validate_mergeable_xcframework.shutil.which",
+                side_effect=self._which_without_xcrun,
+            ):
+                result = validate_mergeable_xcframework.validate_xcframework(zip_path, ["ios"])
+
+            self.assertIn("archive must place exactly one .xcframework at the zip root", result["issues"])
+
+    def test_accepts_zip_with_root_xcframework(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            payload_root = temporary_root / "payload"
+            xcframework_path = self._write_xcframework(
+                payload_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "ios",
+                    }
+                ],
+            )
+            self._write_framework_bundle(xcframework_path / "ios-arm64", framework_name="ncnn", versioned=False)
+            zip_path = temporary_root / "ncnn.xcframework.zip"
+            self._write_zip_from_directory(payload_root, zip_path)
+
+            with mock.patch(
+                "scripts.spm.validate_mergeable_xcframework.shutil.which",
+                side_effect=self._which_without_xcrun,
+            ):
+                result = validate_mergeable_xcframework.validate_xcframework(zip_path, ["ios"])
 
             self.assertEqual(result["issues"], [])
 

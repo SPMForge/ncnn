@@ -501,6 +501,33 @@ class BuildCommandTests(unittest.TestCase):
                 env={"PATH": "/usr/bin:/bin"},
             )
 
+    def test_stage_framework_bundle_skips_install_name_rewrite_for_watchos_arm64_32(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            headers_source = temporary_root / "Headers"
+            headers_source.mkdir()
+            (headers_source / "net.h").write_text("// header")
+            (headers_source / "module.modulemap").write_text("module ncnn { export * }")
+            source_binary = temporary_root / "libncnn.1.dylib"
+            source_binary.write_bytes(b"binary")
+
+            with mock.patch.object(build_apple_xcframework, "_run") as run_mock:
+                framework_path = build_apple_xcframework._stage_framework_bundle(
+                    source_binary=source_binary,
+                    headers_source=headers_source,
+                    output_dir=temporary_root / "staging",
+                    bundle_name="ncnn",
+                    module_name="ncnn",
+                    platform=packaging.CPU_VARIANT.platforms[6],
+                    environment={"PATH": "/usr/bin:/bin"},
+                )
+
+            self.assertEqual(framework_path, temporary_root / "staging" / "ncnn.framework")
+            self.assertTrue((framework_path / "ncnn").exists())
+            self.assertTrue((framework_path / "Headers" / "net.h").exists())
+            self.assertTrue((framework_path / "Modules" / "module.modulemap").exists())
+            run_mock.assert_not_called()
+
     def test_create_xcframework_accepts_framework_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)

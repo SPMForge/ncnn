@@ -278,7 +278,8 @@ def _stage_framework_bundle(
         (framework_root / "Modules").symlink_to(Path("Versions") / "Current" / "Modules")
         (framework_root / "Resources").symlink_to(Path("Versions") / "Current" / "Resources")
 
-    _run(["install_name_tool", "-id", install_name, str(binary_path)], env=environment)
+    if _should_rewrite_install_name(platform):
+        _run(["install_name_tool", "-id", install_name, str(binary_path)], env=environment)
     return framework_root
 
 

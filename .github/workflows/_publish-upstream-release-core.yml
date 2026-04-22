@@ -171,8 +171,13 @@ jobs:
           for platform in ${{ matrix.required_platforms }}; do
             validation_args+=(--require-platform "$platform")
           done
+          archive_path="$(find "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}" -maxdepth 1 -name '*.xcframework.zip' -print -quit)"
+          if [ -z "$archive_path" ]; then
+            echo "missing xcframework archive for ${{ matrix.variant }}" >&2
+            exit 1
+          fi
           python3 scripts/spm/validate_mergeable_xcframework.py \
-            "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.xcframework" \
+            "$archive_path" \
             "${validation_args[@]}"
 
       - name: upload-artifacts

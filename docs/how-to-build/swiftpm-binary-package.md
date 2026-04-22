@@ -44,6 +44,7 @@ macOS packaging detail:
 - iOS, simulator, Catalyst, tvOS, watchOS, and visionOS slices use a flat framework layout.
 - The macOS XCFramework slice is wrapped as a native versioned framework bundle.
 - Preserve `Versions/Current`, top-level symlinks, and `Resources/Info.plist`; do not flatten the macOS slice into a bare `.dylib` directory.
+- Public headers and `Modules/module.modulemap` belong inside each framework slice. Do not keep a repo-level header tree as part of the package contract.
 
 The package does not publish standalone `openmp` or `glslang` binary targets.
 
@@ -160,7 +161,7 @@ Validate the built XCFramework before publishing:
 
 ```bash
 python3 scripts/spm/validate_mergeable_xcframework.py \
-  /tmp/ncnn-spm/ncnn/ncnn.xcframework \
+  /tmp/ncnn-spm/ncnn/ncnn-20260113-apple.xcframework.zip \
   --require-platform ios \
   --require-platform ios-simulator \
   --require-platform macos \
