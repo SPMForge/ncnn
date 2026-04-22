@@ -141,11 +141,13 @@ def _archive_root_xcframework_names(zip_path: Path) -> list[str]:
 
 
 def _extract_archive(zip_path: Path, destination_dir: Path) -> None:
-    if shutil.which("ditto"):
-        subprocess.run(["ditto", "-x", "-k", str(zip_path), str(destination_dir)], check=True)
+    ditto_path = shutil.which("ditto")
+    if ditto_path and Path(ditto_path).exists():
+        subprocess.run([ditto_path, "-x", "-k", str(zip_path), str(destination_dir)], check=True)
         return
-    if shutil.which("unzip"):
-        subprocess.run(["unzip", "-q", str(zip_path), "-d", str(destination_dir)], check=True)
+    unzip_path = shutil.which("unzip")
+    if unzip_path and Path(unzip_path).exists():
+        subprocess.run([unzip_path, "-q", str(zip_path), "-d", str(destination_dir)], check=True)
         return
     raise SystemExit("no supported archive extractor found; install ditto or unzip")
 
