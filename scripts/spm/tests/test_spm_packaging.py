@@ -245,9 +245,11 @@ class SmokeTestScriptTests(unittest.TestCase):
             )
 
             manifest = (package_root / "Package.swift").read_text()
+            main_cpp = (package_root / "Smoke" / "main.cpp").read_text()
             self.assertIn('.binaryTarget(name: "ncnn", path: "Artifacts/ncnn.xcframework")', manifest)
             self.assertNotIn(str(xcframework_path), manifest)
             self.assertTrue((package_root / "Artifacts" / "ncnn.xcframework" / "Info.plist").exists())
+            self.assertIn("#include <ncnn/net.h>", main_cpp)
 
 
 class ValidationWorkflowHelperTests(unittest.TestCase):

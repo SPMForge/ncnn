@@ -62,14 +62,14 @@ let package = Package(
 )
 """
 
-    main_cpp = """#include "net.h"
+    main_cpp = f"""#include <{variant.target_name}/net.h>
 
 int main()
-{
+{{
     ncnn::Net net;
     (void)net;
     return 0;
-}
+}}
 """
 
     (package_root / "Package.swift").write_text(package_swift)
