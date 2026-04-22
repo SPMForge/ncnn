@@ -45,6 +45,7 @@ macOS packaging detail:
 - The macOS XCFramework slice is wrapped as a native versioned framework bundle.
 - Preserve `Versions/Current`, top-level symlinks, and `Resources/Info.plist`; do not flatten the macOS slice into a bare `.dylib` directory.
 - Public headers and `Modules/module.modulemap` belong inside each framework slice. Do not keep a repo-level header tree as part of the package contract.
+- Same-framework public header imports are rewritten during packaging to use framework-style includes such as `<ncnn/net.h>` or `<ncnn_vulkan/net.h>`.
 
 The package does not publish standalone `openmp` or `glslang` binary targets.
 
@@ -230,11 +231,12 @@ What to verify in CI logs:
 - Apple platform support is preflighted before archive work starts; missing `visionOS`, `watchOS`, or other platform support should fail early with an `xcodebuild -downloadPlatform ...` hint instead of failing at the end of a long archive job.
 - Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
 - XCFramework validation rejects a flattened macOS framework slice; the macOS bundle must retain its versioned framework layout.
+- XCFramework validation also rejects exported framework headers that still use quoted or non-framework same-header imports.
 
 ## Consumer Notes
 
 - The generated binaries are mergeable libraries. Xcode consumers should use `MERGED_BINARY_TYPE=automatic`.
-- The repo-local smoke test validates Debug consumption with `swift build` and Release consumption with `xcodebuild ... MERGED_BINARY_TYPE=automatic`.
+- The repo-local smoke test validates Debug consumption with `swift build` and Release consumption with `xcodebuild ... MERGED_BINARY_TYPE=automatic`, using framework-style public header imports.
 - `NCNNVulkan` is a distinct binary target from `NCNN`; do not assume that every Apple platform available in `NCNN` is also available in `NCNNVulkan`.
 - `Package.swift` intentionally derives binary target URLs and checksums from `scripts/spm/current_release.json`; do not hand-edit `Package.swift` for new releases.
 - Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.

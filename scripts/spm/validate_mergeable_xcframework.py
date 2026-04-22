@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import plistlib
+import posixpath
 import re
 import shutil
 import subprocess
@@ -24,6 +25,8 @@ EXPECTED_VTOOL_PLATFORMS = {
     "xros": "VISIONOS",
     "xros-simulator": "VISIONOSSIMULATOR",
 }
+_LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+"([^"]+)"')
+_ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+<([^>]+)>')
 
 
 def command_output(arguments: list[str]) -> str:
@@ -57,6 +60,60 @@ def _framework_has_public_headers(headers_path: Path) -> bool:
     return any(path.is_file() for path in headers_path.rglob("*"))
 
 
+def _normalize_same_framework_include(headers_root: Path, header_path: Path, include_path: str) -> str | None:
+    current_parent = header_path.parent.relative_to(headers_root).as_posix()
+    normalized = posixpath.normpath(posixpath.join(current_parent, include_path))
+    if normalized.startswith("../") or normalized == "..":
+        return None
+    resolved_path = headers_root / normalized
+    if not resolved_path.is_file():
+        return None
+    return normalized
+
+
+def _normalize_framework_style_include(headers_root: Path, header_path: Path, include_path: str) -> str | None:
+    candidate_path = include_path.split("/", 1)[1] if "/" in include_path else include_path
+    return _normalize_same_framework_include(headers_root, header_path, candidate_path)
+
+
+def _framework_header_include_issues(headers_path: Path, framework_name: str) -> list[str]:
+    issues: list[str] = []
+    for header_path in sorted(headers_path.rglob("*.h")):
+        relative_header_path = header_path.relative_to(headers_path).as_posix()
+        for line in header_path.read_text().splitlines():
+            match = _LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN.match(line.strip())
+            if match:
+                include_path = match.group(1)
+                normalized_include = _normalize_same_framework_include(headers_path, header_path, include_path)
+                if normalized_include is not None:
+                    issues.append(
+                        f'framework header {relative_header_path} uses quoted or relative include "{include_path}" for same-framework public header'
+                    )
+                    continue
+
+            angle_match = _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN.match(line.strip())
+            if not angle_match:
+                continue
+
+            include_path = angle_match.group(1)
+            normalized_include = _normalize_framework_style_include(headers_path, header_path, include_path)
+            if normalized_include is None:
+                continue
+
+            if include_path == normalized_include:
+                issues.append(
+                    f'framework header {relative_header_path} uses non-framework include <{include_path}> for same-framework public header'
+                )
+                continue
+
+            include_prefix = include_path.split("/", 1)[0]
+            if include_prefix != framework_name:
+                issues.append(
+                    f'framework header {relative_header_path} uses framework include <{include_path}> with wrong framework prefix for same-framework public header'
+                )
+    return issues
+
+
 def _framework_interface_issues(framework_path: Path) -> list[str]:
     active_root = _framework_active_root(framework_path)
     issues: list[str] = []
@@ -64,6 +121,8 @@ def _framework_interface_issues(framework_path: Path) -> list[str]:
     module_map_path = active_root / "Modules" / "module.modulemap"
     if not _framework_has_public_headers(headers_path):
         issues.append("framework bundle missing public headers")
+    else:
+        issues.extend(_framework_header_include_issues(headers_path, framework_path.stem))
     if not module_map_path.is_file():
         issues.append("framework bundle missing Modules/module.modulemap")
     return issues

@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import posixpath
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +18,9 @@ if __package__ in {None, ""}:
 from scripts.spm import archive_builder
 from scripts.spm import packaging
 from scripts.spm import validate_mergeable_xcframework
+
+_LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^(\s*#\s*(?:include|import)\s+)"([^"]+)"(.*)$')
+_ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^(\s*#\s*(?:include|import)\s+)<([^>]+)>(.*)$')
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -192,13 +197,69 @@ def _stage_headers(install_dir: Path, output_dir: Path, module_name: str) -> Pat
 }}
 """
     )
+    _rewrite_same_framework_header_includes(headers_output, module_name)
     return headers_output
+
+
+def _normalize_public_header_include(current_header: Path, headers_root: Path, include_path: str) -> str | None:
+    current_parent = current_header.parent.relative_to(headers_root).as_posix()
+    normalized = posixpath.normpath(posixpath.join(current_parent, include_path))
+    if normalized.startswith("../") or normalized == "..":
+        return None
+    resolved_path = headers_root / normalized
+    if not resolved_path.is_file():
+        return None
+    return normalized
+
+
+def _normalize_framework_style_include(current_header: Path, headers_root: Path, include_path: str) -> str | None:
+    candidate_path = include_path.split("/", 1)[1] if "/" in include_path else include_path
+    return _normalize_public_header_include(current_header, headers_root, candidate_path)
+
+
+def _rewrite_same_framework_header_includes(headers_root: Path, framework_name: str) -> None:
+    for header_path in sorted(headers_root.rglob("*.h")):
+        rewritten_lines: list[str] = []
+        changed = False
+        for line in header_path.read_text().splitlines(keepends=True):
+            stripped_line = line.rstrip("\r\n")
+            line_ending = line[len(stripped_line) :]
+            local_match = _LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN.match(stripped_line)
+            if local_match:
+                normalized_include = _normalize_public_header_include(header_path, headers_root, local_match.group(2))
+                if normalized_include is not None:
+                    rewritten_lines.append(
+                        f'{local_match.group(1)}<{framework_name}/{normalized_include}>{local_match.group(3)}{line_ending}'
+                    )
+                    changed = True
+                    continue
+
+            angle_match = _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN.match(stripped_line)
+            if not angle_match:
+                rewritten_lines.append(line)
+                continue
+
+            normalized_include = _normalize_framework_style_include(header_path, headers_root, angle_match.group(2))
+            if normalized_include is None:
+                rewritten_lines.append(line)
+                continue
+
+            rewritten_lines.append(
+                f'{angle_match.group(1)}<{framework_name}/{normalized_include}>{angle_match.group(3)}{line_ending}'
+            )
+            changed = True
+
+        if changed:
+            header_path.write_text("".join(rewritten_lines))
 
 
 def _copy_framework_headers(headers_source: Path, destination_dir: Path) -> None:
     destination_dir.mkdir(parents=True, exist_ok=True)
     for source_path in headers_source.iterdir():
         if source_path.name == "module.modulemap":
+            continue
+        if source_path.is_dir():
+            shutil.copytree(source_path, destination_dir / source_path.name)
             continue
         if source_path.is_file():
             shutil.copy2(source_path, destination_dir / source_path.name)

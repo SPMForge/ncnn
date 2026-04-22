@@ -252,6 +252,39 @@ class SmokeTestScriptTests(unittest.TestCase):
             self.assertIn("#include <ncnn/net.h>", main_cpp)
 
 
+class HeaderStagingTests(unittest.TestCase):
+    def test_stage_headers_rewrites_same_framework_includes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            install_dir = temporary_root / "install"
+            headers_root = install_dir / "include" / "ncnn"
+            headers_root.mkdir(parents=True)
+            (headers_root / "mat.h").write_text("// mat header\n")
+            (headers_root / "layer.h").write_text("// layer header\n")
+            (headers_root / "net.h").write_text(
+                '#include "mat.h"\n'
+                '#import "layer.h"\n'
+                "#include <mat.h>\n"
+                "#include <wrong/layer.h>\n"
+                "#include <vector>\n"
+            )
+
+            staged_headers = build_apple_xcframework._stage_headers(
+                install_dir,
+                temporary_root / "staging",
+                "ncnn_vulkan",
+            )
+
+            self.assertEqual(staged_headers, temporary_root / "staging" / "Headers")
+            staged_net_header = (staged_headers / "net.h").read_text()
+            self.assertIn("#include <ncnn_vulkan/mat.h>", staged_net_header)
+            self.assertIn("#import <ncnn_vulkan/layer.h>", staged_net_header)
+            self.assertNotIn("#include <mat.h>", staged_net_header)
+            self.assertNotIn("#include <wrong/layer.h>", staged_net_header)
+            self.assertIn("#include <ncnn_vulkan/layer.h>", staged_net_header)
+            self.assertIn("#include <vector>", staged_net_header)
+
+
 class ValidationWorkflowHelperTests(unittest.TestCase):
     def test_validate_package_contract_accepts_fresh_release_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

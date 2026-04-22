@@ -88,6 +88,12 @@ class XCFrameworkValidationTests(unittest.TestCase):
         (framework_root / "Headers" / "net.h").write_text("// header")
         return framework_root
 
+    def _write_framework_header(self, framework_root: Path, header_name: str, contents: str) -> None:
+        active_root = framework_root / "Versions" / "Current"
+        headers_root = active_root / "Headers" if active_root.exists() else framework_root / "Headers"
+        headers_root.mkdir(parents=True, exist_ok=True)
+        (headers_root / header_name).write_text(contents)
+
     def _write_legacy_dylib_slice(self, slice_root: Path, *, dylib_name: str) -> None:
         slice_root.mkdir(parents=True)
         (slice_root / dylib_name).write_bytes(b"binary")
@@ -252,6 +258,72 @@ class XCFrameworkValidationTests(unittest.TestCase):
 
             self.assertIn("ios: framework bundle missing public headers", result["issues"])
             self.assertIn("ios: framework bundle missing Modules/module.modulemap", result["issues"])
+
+    def test_reports_framework_header_with_quoted_same_framework_include(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "ios",
+                    }
+                ],
+            )
+            framework_root = self._write_framework_bundle(
+                xcframework_path / "ios-arm64",
+                framework_name="ncnn",
+                versioned=False,
+            )
+            self._write_framework_header(framework_root, "mat.h", "// mat header\n")
+            self._write_framework_header(framework_root, "net.h", '#include "mat.h"\n')
+
+            with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
+                result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["ios"])
+
+            self.assertIn(
+                'ios: framework header net.h uses quoted or relative include "mat.h" for same-framework public header',
+                result["issues"],
+            )
+
+    def test_reports_framework_header_with_non_framework_style_angle_include(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "ios",
+                    }
+                ],
+            )
+            framework_root = self._write_framework_bundle(
+                xcframework_path / "ios-arm64",
+                framework_name="ncnn",
+                versioned=False,
+            )
+            self._write_framework_header(framework_root, "mat.h", "// mat header\n")
+            self._write_framework_header(framework_root, "net.h", "#include <mat.h>\n#include <wrong/mat.h>\n")
+
+            with mock.patch("scripts.spm.validate_mergeable_xcframework.shutil.which", return_value=None):
+                result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["ios"])
+
+            self.assertIn(
+                "ios: framework header net.h uses non-framework include <mat.h> for same-framework public header",
+                result["issues"],
+            )
+            self.assertIn(
+                "ios: framework header net.h uses framework include <wrong/mat.h> with wrong framework prefix for same-framework public header",
+                result["issues"],
+            )
 
     def test_reports_archive_without_root_xcframework(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
