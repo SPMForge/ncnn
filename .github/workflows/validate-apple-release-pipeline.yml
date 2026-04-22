@@ -18,9 +18,6 @@ concurrency:
   group: validate-apple-release-pipeline-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  DEVELOPER_DIR: /Applications/Xcode_16.4.0.app/Contents/Developer
-
 jobs:
   verify:
     name: Validate release pipeline
@@ -37,10 +34,15 @@ jobs:
         run: |
           python3 -m unittest \
             scripts.spm.tests.test_release_flow \
+            scripts.spm.tests.test_release_state \
             scripts.spm.tests.test_source_acquisition \
             scripts.spm.tests.test_spm_packaging \
             scripts.spm.tests.test_xcframework_validation \
             scripts.tests.test_release_branch_workflows
+
+      - name: verify-sop-conformance
+        run: |
+          python3 scripts/spm/verify_sop_conformance.py
 
       - name: validate-workflow-yaml
         run: |

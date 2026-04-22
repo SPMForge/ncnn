@@ -66,12 +66,17 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertNotIn("schedule:", workflow)
         self.assertIn("release_channel:", workflow)
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
+        self.assertIn("scripts/spm/release_state.py", workflow)
+        self.assertIn("inspect-release", workflow)
         self.assertIn("scripts/spm/source_acquisition.py export-source", workflow)
         self.assertIn("--output Package.swift", workflow)
         self.assertIn('--package-tag "${{ needs.resolve.outputs.package_tag }}"', workflow)
         self.assertIn("git add Package.swift", workflow)
         self.assertIn("gh release create", workflow)
+        self.assertIn("gh release upload", workflow)
+        self.assertIn("gh api --method PATCH", workflow)
         self.assertIn('TARGET_BRANCH="${{ github.event.repository.default_branch || \'main\' }}"', workflow)
+        self.assertNotIn("DEVELOPER_DIR:", workflow)
 
     def test_package_doc_describes_main_release_branch_model(self) -> None:
         document = PACKAGE_DOC_PATH.read_text()
@@ -116,6 +121,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("upstream_tag:", workflow)
         self.assertIn("scripts.spm.tests.test_release_flow", workflow)
+        self.assertIn("scripts.spm.tests.test_release_state", workflow)
         self.assertIn("scripts/spm/preflight_apple_platforms.py", workflow)
         self.assertIn("scripts/spm/validate_package_contract.py", workflow)
         self.assertIn("scripts/spm/validate_mergeable_xcframework.py", workflow)
@@ -136,6 +142,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("Validate generated package contract", package_contract_job)
         self.assertIn("actions/download-artifact@v8", package_contract_job)
         self.assertIn("validate-generated-package-contract", package_contract_job)
+        self.assertNotIn("DEVELOPER_DIR:", workflow)
 
     def test_readme_describes_wrapper_repo_only(self) -> None:
         readme = README_PATH.read_text()
