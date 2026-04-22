@@ -17,7 +17,7 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 ## Repository Contents
 
 - `Package.swift`
-  - Generated-at-release manifest that reads `scripts/spm/current_release.json`
+  - Generated-at-release static manifest for SwiftPM consumers
 - `scripts/spm/`
   - Repo-local packaging, tag selection, source acquisition, manifest rendering, XCFramework validation, and smoke-test helpers
 - `.github/workflows/`
@@ -40,7 +40,7 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 - Release and validation jobs export the requested upstream snapshot before building.
 - Stable package tags require explicit manual intent.
 - Scheduled alpha publishes advance `X.Y.Z-alpha.N` when `main` has moved beyond the latest alpha for the same upstream snapshot; manual alpha publishes use the same numbering rule.
-- `Package.swift` should not be hand-edited for releases; update `scripts/spm/current_release.json` via the release pipeline.
+- `Package.swift` should not be hand-edited for releases; the release pipeline regenerates it from `scripts/spm/current_release.json`.
 
 ## Documentation
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,11 +45,8 @@ def _capture_output(command: list[str], cwd: Path | None = None) -> str:
     return process.stdout
 
 
-def _stage_validation_root(repo_root: Path, package_root: Path) -> None:
+def _stage_validation_root(package_root: Path) -> None:
     package_root.mkdir(parents=True, exist_ok=True)
-    (package_root / "scripts" / "spm").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(repo_root / "Package.swift", package_root / "Package.swift")
-    shutil.copy2(packaging.PLATFORM_METADATA_PATH, package_root / "scripts" / "spm" / "platforms.json")
 
 
 def _render_release_metadata(
@@ -64,6 +60,8 @@ def _render_release_metadata(
     command = [
         sys.executable,
         str(packaging.SCRIPTS_ROOT / "render_package.py"),
+        "--output",
+        str(package_root / "Package.swift"),
         "--package-name",
         package_name,
         "--owner",
@@ -91,7 +89,7 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="ncnn-package-contract-") as temporary_directory:
             package_root = Path(temporary_directory)
-            _stage_validation_root(repo_root, package_root)
+            _stage_validation_root(package_root)
             current_release_json = _render_release_metadata(
                 package_root=package_root,
                 release_metadata_paths=release_metadata_paths,

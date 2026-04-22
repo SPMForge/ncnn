@@ -160,13 +160,23 @@ class PackageRenderingTests(unittest.TestCase):
         self.assertIn('library(name: "NCNN", targets: ["ncnn"])', package_contents)
         self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan"])', package_contents)
         self.assertIn(
-            '.binaryTarget(name: "ncnn", url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple.xcframework.zip", checksum: "cpu-checksum")',
+            '.binaryTarget(\n'
+            '            name: "ncnn",\n'
+            '            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple.xcframework.zip",\n'
+            '            checksum: "cpu-checksum"\n'
+            "        )",
             package_contents,
         )
         self.assertIn(
-            '.binaryTarget(name: "ncnn_vulkan", url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple-vulkan.xcframework.zip", checksum: "vulkan-checksum")',
+            '.binaryTarget(\n'
+            '            name: "ncnn_vulkan",\n'
+            '            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple-vulkan.xcframework.zip",\n'
+            '            checksum: "vulkan-checksum"\n'
+            "        )",
             package_contents,
         )
+        self.assertNotIn("current_release.json", package_contents)
+        self.assertNotIn("Foundation", package_contents)
 
     def test_combined_metadata_preserves_requested_package_name(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -189,21 +199,66 @@ class PackageRenderingTests(unittest.TestCase):
             payload = json.loads(output_path.read_text())
             self.assertEqual(payload["package_name"], "custom-ncnn")
 
+    def test_rendered_static_manifest_is_self_contained(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            package_root = Path(temporary_directory)
+            package_swift = package_root / "Package.swift"
+            package_swift.write_text(
+                packaging.render_package_swift(
+                    package_name="ncnn",
+                    owner="SPMForge",
+                    repo="ncnn",
+                    releases=[
+                        packaging.ReleaseAsset(
+                            variant=packaging.CPU_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum="cpu-checksum",
+                        ),
+                        packaging.ReleaseAsset(
+                            variant=packaging.VULKAN_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum="vulkan-checksum",
+                        ),
+                    ],
+                )
+            )
+
+            process = subprocess.run(
+                ["swift", "package", "dump-package"],
+                cwd=package_root,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(process.returncode, 0, msg=process.stderr)
+
 
 class RootManifestTests(unittest.TestCase):
-    def _write_manifest_fixture(
-        self,
-        package_root: Path,
-        current_release_payload: str | None = None,
-    ) -> None:
-        (package_root / "scripts" / "spm").mkdir(parents=True)
+    def test_root_manifest_matches_current_release_metadata(self) -> None:
+        payload = json.loads(CURRENT_RELEASE_METADATA_PATH.read_text())
+        releases = [
+            packaging.ReleaseAsset(
+                variant=packaging.variant_for_target_name(release["target_name"]),
+                upstream_tag=release["upstream_tag"],
+                package_tag=release["package_tag"],
+                checksum=release["checksum"],
+            )
+            for release in payload["releases"]
+        ]
+
+        expected_manifest = packaging.render_package_swift(
+            package_name=payload["package_name"],
+            owner=payload["owner"],
+            repo=payload["repo"],
+            releases=releases,
+        )
+
+        self.assertEqual(PACKAGE_SWIFT_PATH.read_text(), expected_manifest)
+
+    def _write_manifest_fixture(self, package_root: Path) -> None:
         shutil.copy2(PACKAGE_SWIFT_PATH, package_root / "Package.swift")
-        if PLATFORM_METADATA_PATH.exists():
-            shutil.copy2(PLATFORM_METADATA_PATH, package_root / "scripts" / "spm" / "platforms.json")
-        if current_release_payload is None:
-            shutil.copy2(CURRENT_RELEASE_METADATA_PATH, package_root / "scripts" / "spm" / "current_release.json")
-        else:
-            (package_root / "scripts" / "spm" / "current_release.json").write_text(current_release_payload)
 
     def _dump_package(self, package_root: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -235,15 +290,14 @@ class RootManifestTests(unittest.TestCase):
                 },
             )
 
-    def test_root_manifest_fails_when_release_metadata_is_malformed(self) -> None:
+    def test_root_manifest_does_not_require_release_metadata_sidecar_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             package_root = Path(temporary_directory)
-            self._write_manifest_fixture(package_root, current_release_payload="{}\n")
+            self._write_manifest_fixture(package_root)
 
             process = self._dump_package(package_root)
 
-            self.assertNotEqual(process.returncode, 0)
-            self.assertIn("current_release.json", process.stderr)
+            self.assertEqual(process.returncode, 0, msg=process.stderr)
 
 
 class SmokeTestScriptTests(unittest.TestCase):

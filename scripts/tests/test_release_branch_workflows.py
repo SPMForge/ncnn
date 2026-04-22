@@ -67,6 +67,8 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("release_channel:", workflow)
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
         self.assertIn("scripts/spm/source_acquisition.py export-source", workflow)
+        self.assertIn("--output Package.swift", workflow)
+        self.assertIn("git add Package.swift", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn('TARGET_BRANCH="${{ github.event.repository.default_branch || \'main\' }}"', workflow)
 

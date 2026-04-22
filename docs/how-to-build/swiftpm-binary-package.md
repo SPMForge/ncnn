@@ -12,7 +12,7 @@ This document describes the SwiftPM binary release flow maintained on the `main`
 - Release metadata file: `scripts/spm/current_release.json`
 - Platform metadata file: `scripts/spm/platforms.json`
 - Source acquisition contract: `scripts/spm/source_acquisition.json`
-- Manifest model: root `Package.swift` reads `scripts/spm/current_release.json`; release automation updates the metadata file instead of hand-editing checksums
+- Manifest model: release automation regenerates root `Package.swift` from `scripts/spm/current_release.json`; published consumers read a static manifest instead of repo-local sidecar JSON files
 
 Wrapper repo state:
 
@@ -80,7 +80,7 @@ Each workflow:
 5. Runs `scripts/spm/preflight_apple_platforms.py` so missing Apple platform support fails before long archive jobs start
 6. Validates `MergeableMetadata`, binary paths, required platforms, and `vtool` platform identity
 7. Validates the generated package contract from the same fresh build metadata with `scripts/spm/validate_package_contract.py` or `swift package dump-package`
-8. Updates `scripts/spm/current_release.json`
+8. Updates `scripts/spm/current_release.json` and regenerates `Package.swift`
 9. Publishes the release assets from `main` on `SPMForge/ncnn`
 
 ## Local Maintenance Commands
@@ -239,7 +239,7 @@ What to verify in CI logs:
 - The generated binaries are mergeable libraries. Xcode consumers should use `MERGED_BINARY_TYPE=automatic`.
 - The repo-local smoke test validates Debug consumption with `swift build` and Release consumption with `xcodebuild ... MERGED_BINARY_TYPE=automatic`, using framework-style public header imports.
 - `NCNNVulkan` is a distinct binary target from `NCNN`; do not assume that every Apple platform available in `NCNN` is also available in `NCNNVulkan`.
-- `Package.swift` intentionally derives binary target URLs and checksums from `scripts/spm/current_release.json`; do not hand-edit `Package.swift` for new releases.
+- `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
 - Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.
 - Automated SwiftPM package tags are always GitHub prereleases in the alpha channel.
 - Manual publishing must explicitly choose `alpha` or `stable`. Repeated packaging fixes for the same upstream snapshot must advance `N`; stable promotion must publish the exact stable package tag once, not mutate an existing alpha release.

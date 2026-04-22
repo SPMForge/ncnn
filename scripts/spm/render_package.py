@@ -97,6 +97,7 @@ def main() -> int:
     )
 
     if arguments.output is not None:
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(package_contents)
     _write_combined_metadata(
         arguments.current_release_json,

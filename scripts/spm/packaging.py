@@ -221,8 +221,14 @@ def render_package_swift(package_name: str, owner: str, repo: str, releases: lis
     )
 
     for release in releases:
-        lines.append(
-            f'        .binaryTarget(name: "{release.variant.target_name}", url: "{release_url(owner, repo, release.package_tag, release.variant, release.upstream_tag)}", checksum: "{release.checksum}"),'
+        lines.extend(
+            [
+                "        .binaryTarget(",
+                f'            name: "{release.variant.target_name}",',
+                f'            url: "{release_url(owner, repo, release.package_tag, release.variant, release.upstream_tag)}",',
+                f'            checksum: "{release.checksum}"',
+                "        ),",
+            ]
         )
 
     lines.extend(
