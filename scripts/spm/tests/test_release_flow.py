@@ -144,7 +144,29 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, msg=process.stderr)
         return json.loads(process.stdout)
 
-    def test_sync_mode_uses_alpha_1_package_tag(self) -> None:
+    def _commit_file(self, repo_root: Path, relative_path: str, contents: str, message: str) -> None:
+        file_path = repo_root / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(contents)
+        subprocess.run(["git", "add", relative_path], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    def test_sync_mode_uses_alpha_1_package_tag_when_no_alpha_release_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+
+            payload = self._run_script(repo_root, "--explicit-tag", "20260113")
+
+            self.assertEqual(
+                payload,
+                {
+                    "upstream_tag": "20260113",
+                    "package_tag": packaging.package_tag_for_upstream_tag("20260113"),
+                },
+            )
+
+    def test_sync_mode_reuses_latest_alpha_tag_when_head_already_matches_latest_alpha(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repo_root = Path(temporary_directory)
             self._init_git_repo(repo_root)
@@ -156,7 +178,24 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
-                    "package_tag": packaging.package_tag_for_upstream_tag("20260113"),
+                    "package_tag": "1.0.20260113-alpha.1",
+                },
+            )
+
+    def test_sync_mode_bumps_alpha_number_when_head_has_advanced_since_latest_alpha(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            subprocess.run(["git", "tag", "1.0.20260113-alpha.1"], cwd=repo_root, check=True, capture_output=True, text=True)
+            self._commit_file(repo_root, "packaging.txt", "updated packaging logic\n", "packaging update")
+
+            payload = self._run_script(repo_root, "--explicit-tag", "20260113")
+
+            self.assertEqual(
+                payload,
+                {
+                    "upstream_tag": "20260113",
+                    "package_tag": "1.0.20260113-alpha.2",
                 },
             )
 

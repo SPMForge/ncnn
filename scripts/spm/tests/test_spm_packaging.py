@@ -60,6 +60,32 @@ class PackageVersionTests(unittest.TestCase):
             1,
         )
 
+    def test_finds_latest_alpha_package_tag_for_existing_package_refs(self) -> None:
+        self.assertEqual(
+            packaging.latest_alpha_package_tag_for_upstream_tag(
+                "20260113",
+                [
+                    "refs/tags/1.0.20260113-alpha.1",
+                    "refs/tags/1.0.20260113-alpha.3",
+                    "refs/tags/1.0.20260113-alpha.2",
+                    "refs/tags/1.0.20250503-alpha.4",
+                ],
+            ),
+            "1.0.20260113-alpha.3",
+        )
+
+    def test_returns_none_when_no_matching_alpha_package_tag_exists(self) -> None:
+        self.assertIsNone(
+            packaging.latest_alpha_package_tag_for_upstream_tag(
+                "20260113",
+                [
+                    "refs/tags/1.0.20260113",
+                    "refs/tags/1.0.20260113-beta.1",
+                    "refs/heads/main",
+                ],
+            )
+        )
+
 
 class AssetNamingTests(unittest.TestCase):
     def test_cpu_asset_name(self) -> None:

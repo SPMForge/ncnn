@@ -8,7 +8,7 @@ This document describes the SwiftPM binary release flow maintained on the `main`
 - Upstream source of truth: `Tencent/ncnn` tags in `YYYYMMDD` format
 - Automated package tag format: `X.Y.Z-alpha.N`
 - Manual publish mode: `alpha` or `stable`
-- Current mapping rule: upstream tag `YYYYMMDD` becomes package version `1.0.YYYYMMDD`; automated sync publishes `1.0.YYYYMMDD-alpha.1`, manual alpha publishes the next `1.0.YYYYMMDD-alpha.N`, and manual stable publishes `1.0.YYYYMMDD`
+- Current mapping rule: upstream tag `YYYYMMDD` becomes package version `1.0.YYYYMMDD`; automated sync publishes `1.0.YYYYMMDD-alpha.1` for the first successful package build of that upstream tag and advances to the next `1.0.YYYYMMDD-alpha.N` when `main` has moved past the latest published alpha for the same upstream snapshot; manual alpha also publishes the next `1.0.YYYYMMDD-alpha.N`, and manual stable publishes `1.0.YYYYMMDD`
 - Release metadata file: `scripts/spm/current_release.json`
 - Platform metadata file: `scripts/spm/platforms.json`
 - Source acquisition contract: `scripts/spm/source_acquisition.json`
@@ -56,6 +56,7 @@ Two GitHub Actions workflows drive the package lifecycle:
 - `.github/workflows/publish-latest-upstream-alpha.yml`
   - Scheduled latest stable release detection
   - Publishes the initial alpha prerelease for a new upstream tag as `X.Y.Z-alpha.1`
+  - Automatically advances to the next `X.Y.Z-alpha.N` when `main` contains packaging changes after the latest published alpha for that same upstream tag
   - Optional manual rerun
 - `.github/workflows/publish-upstream-release-manually.yml`
   - Manual publish for a specific upstream tag

@@ -54,6 +54,17 @@ def _list_refs(repo_root: Path, ref_prefix: str) -> list[str]:
     return [line.strip() for line in process.stdout.splitlines() if line.strip()]
 
 
+def _rev_parse(repo_root: Path, ref_name: str) -> str:
+    process = subprocess.run(
+        ["git", "rev-parse", f"{ref_name}^{{commit}}"],
+        check=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return process.stdout.strip()
+
+
 def _resolve_upstream_tag(arguments: argparse.Namespace) -> str:
     if arguments.explicit_tag:
         packaging.package_tag_for_upstream_tag(arguments.explicit_tag)
@@ -76,10 +87,23 @@ def _resolve_package_tag(arguments: argparse.Namespace, upstream_tag: str) -> st
     if arguments.release_channel == "stable":
         return packaging.stable_package_tag_for_upstream_tag(upstream_tag)
 
+    package_refs = _list_refs(arguments.repo_root, "refs/tags")
+    if arguments.release_channel == "sync":
+        latest_alpha_tag = packaging.latest_alpha_package_tag_for_upstream_tag(upstream_tag, package_refs)
+        if latest_alpha_tag is None:
+            return packaging.package_tag_for_upstream_tag(upstream_tag)
+
+        head_commit = _rev_parse(arguments.repo_root, "HEAD")
+        latest_alpha_commit = _rev_parse(arguments.repo_root, f"refs/tags/{latest_alpha_tag}")
+        if latest_alpha_commit == head_commit:
+            return latest_alpha_tag
+
+        alpha_number = packaging.next_alpha_number_for_upstream_tag(upstream_tag, package_refs)
+        return packaging.package_tag_for_upstream_tag(upstream_tag, alpha_number=alpha_number)
+
     if arguments.release_channel not in {"alpha", "backfill"}:
         return packaging.package_tag_for_upstream_tag(upstream_tag)
 
-    package_refs = _list_refs(arguments.repo_root, "refs/tags")
     alpha_number = packaging.next_alpha_number_for_upstream_tag(upstream_tag, package_refs)
     return packaging.package_tag_for_upstream_tag(upstream_tag, alpha_number=alpha_number)
 

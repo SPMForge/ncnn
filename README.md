@@ -39,7 +39,7 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 - Release builds fetch upstream tags into `refs/upstream-tags/*`.
 - Release and validation jobs export the requested upstream snapshot before building.
 - Stable package tags require explicit manual intent.
-- Alpha repair publishes must advance `X.Y.Z-alpha.N`.
+- Scheduled alpha publishes advance `X.Y.Z-alpha.N` when `main` has moved beyond the latest alpha for the same upstream snapshot; manual alpha publishes use the same numbering rule.
 - `Package.swift` should not be hand-edited for releases; update `scripts/spm/current_release.json` via the release pipeline.
 
 ## Documentation

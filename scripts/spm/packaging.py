@@ -148,6 +148,27 @@ def next_alpha_number_for_upstream_tag(upstream_tag: str, refs: list[str]) -> in
     return max(existing_alpha_numbers) + 1
 
 
+def latest_alpha_package_tag_for_upstream_tag(upstream_tag: str, refs: list[str]) -> str | None:
+    package_version = package_version_for_upstream_tag(upstream_tag)
+    tag_prefix = f"{package_version}-alpha."
+    latest_alpha_number: int | None = None
+
+    for ref in refs:
+        ref_name = ref.removeprefix("refs/tags/")
+        if not ref_name.startswith(tag_prefix):
+            continue
+        alpha_suffix = ref_name[len(tag_prefix) :]
+        if not _ALPHA_NUMBER_PATTERN.match(alpha_suffix):
+            continue
+        alpha_number = int(alpha_suffix)
+        if latest_alpha_number is None or alpha_number > latest_alpha_number:
+            latest_alpha_number = alpha_number
+
+    if latest_alpha_number is None:
+        return None
+    return package_tag_for_upstream_tag(upstream_tag, alpha_number=latest_alpha_number)
+
+
 def asset_name_for_variant(variant: Variant, upstream_tag: str) -> str:
     if not _UPSTREAM_TAG_PATTERN.match(upstream_tag):
         raise ValueError(f"unsupported upstream tag format: {upstream_tag}")
