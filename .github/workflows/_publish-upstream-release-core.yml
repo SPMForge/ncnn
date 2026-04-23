@@ -124,6 +124,7 @@ jobs:
       CCACHE_MAXSIZE: 2G
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
+      HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache
     steps:
       - uses: actions/checkout@v6
         with:
@@ -147,8 +148,14 @@ jobs:
             --variant "${{ matrix.variant }}" \
             "${preflight_args[@]}"
 
+      - name: restore-homebrew-download-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.HOMEBREW_CACHE }}
+          key: ${{ runner.os }}-homebrew-downloads-v1-ccache
+
       - name: restore-ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
@@ -211,6 +218,7 @@ jobs:
           path: |
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
+          overwrite: true
 
       - name: build-ccache-stats
         if: always()
@@ -249,9 +257,14 @@ jobs:
             --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json \
             --current-release-json scripts/spm/current_release.json
 
-      - name: validate-package-manifest
+      - name: validate-package-contract
         run: |
-          swift package dump-package >/tmp/ncnn-package.json
+          python3 scripts/spm/validate_package_contract.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --release-metadata artifacts/ncnn/ncnn.release.json \
+            --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json \
+            --release-archive artifacts/ncnn/ncnn-*.xcframework.zip \
+            --release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip
 
       - name: prepare-release-ref
         env:
@@ -301,7 +314,7 @@ jobs:
           - Source acquisition: repo-local source acquisition contract with exported upstream snapshot
           - Products: NCNN, NCNNVulkan
           - Vulkan caveat: watchOS and watchOS Simulator are intentionally excluded
-          - Verification: script unit tests, xcframework artifact validation, local xcframework smoke tests, swift package dump-package
+          - Verification: script unit tests, xcframework artifact validation, final package contract validation, local xcframework smoke tests
           EOF
 
       - name: publish-release

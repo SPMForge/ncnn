@@ -201,7 +201,11 @@ def render_package_platforms() -> list[str]:
     ]
 
 
-def render_package_swift(package_name: str, owner: str, repo: str, releases: list[ReleaseAsset]) -> str:
+def _render_package_manifest(
+    package_name: str,
+    releases: list[ReleaseAsset],
+    binary_target_lines: list[list[str]],
+) -> str:
     lines = [
         "// swift-tools-version: 5.9",
         "",
@@ -227,16 +231,8 @@ def render_package_swift(package_name: str, owner: str, repo: str, releases: lis
         ]
     )
 
-    for release in releases:
-        lines.extend(
-            [
-                "        .binaryTarget(",
-                f'            name: "{release.variant.target_name}",',
-                f'            url: "{release_url(owner, repo, release.package_tag, release.variant, release.upstream_tag)}",',
-                f'            checksum: "{release.checksum}"',
-                "        ),",
-            ]
-        )
+    for binary_target in binary_target_lines:
+        lines.extend(binary_target)
 
     lines.extend(
         [
@@ -246,6 +242,39 @@ def render_package_swift(package_name: str, owner: str, repo: str, releases: lis
         ]
     )
     return "\n".join(lines)
+
+
+def render_package_swift(package_name: str, owner: str, repo: str, releases: list[ReleaseAsset]) -> str:
+    return _render_package_manifest(
+        package_name=package_name,
+        releases=releases,
+        binary_target_lines=[
+            [
+                "        .binaryTarget(",
+                f'            name: "{release.variant.target_name}",',
+                f'            url: "{release_url(owner, repo, release.package_tag, release.variant, release.upstream_tag)}",',
+                f'            checksum: "{release.checksum}"',
+                "        ),",
+            ]
+            for release in releases
+        ],
+    )
+
+
+def render_local_package_swift(package_name: str, releases: list[ReleaseAsset]) -> str:
+    return _render_package_manifest(
+        package_name=package_name,
+        releases=releases,
+        binary_target_lines=[
+            [
+                "        .binaryTarget(",
+                f'            name: "{release.variant.target_name}",',
+                f'            path: "Artifacts/{release.variant.target_name}.xcframework"',
+                "        ),",
+            ]
+            for release in releases
+        ],
+    )
 
 
 def build_artifact_metadata_payload(release: ReleaseAsset, artifact_path: str) -> dict[str, object]:

@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import io
 import json
 from pathlib import Path
 import shutil
@@ -6,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 from scripts.spm import packaging
 from scripts.spm import build_apple_xcframework
@@ -200,6 +203,40 @@ class PackageRenderingTests(unittest.TestCase):
 
             payload = json.loads(output_path.read_text())
             self.assertEqual(payload["package_name"], "custom-ncnn")
+
+    def test_renders_local_binary_targets_for_package_contract_validation(self) -> None:
+        package_contents = packaging.render_local_package_swift(
+            package_name="ncnn",
+            releases=[
+                packaging.ReleaseAsset(
+                    variant=packaging.CPU_VARIANT,
+                    upstream_tag="20260113",
+                    package_tag="1.0.20260113-alpha.1",
+                    checksum="cpu-checksum",
+                ),
+                packaging.ReleaseAsset(
+                    variant=packaging.VULKAN_VARIANT,
+                    upstream_tag="20260113",
+                    package_tag="1.0.20260113-alpha.1",
+                    checksum="vulkan-checksum",
+                ),
+            ],
+        )
+
+        self.assertIn(
+            '.binaryTarget(\n'
+            '            name: "ncnn",\n'
+            '            path: "Artifacts/ncnn.xcframework"\n'
+            "        )",
+            package_contents,
+        )
+        self.assertIn(
+            '.binaryTarget(\n'
+            '            name: "ncnn_vulkan",\n'
+            '            path: "Artifacts/ncnn_vulkan.xcframework"\n'
+            "        )",
+            package_contents,
+        )
 
     def test_build_artifact_metadata_payload_uses_schema_and_canonical_variant_fields(self) -> None:
         release = packaging.ReleaseAsset(
@@ -421,14 +458,125 @@ class HeaderStagingTests(unittest.TestCase):
 
 
 class ValidationWorkflowHelperTests(unittest.TestCase):
+    def _write_release_archive_fixture(self, root: Path, variant: packaging.Variant, upstream_tag: str) -> Path:
+        payload_root = root / "payload"
+        xcframework_root = payload_root / f"{variant.target_name}.xcframework"
+        xcframework_root.mkdir(parents=True)
+        (xcframework_root / "Info.plist").write_text("fixture")
+
+        archive_path = root / packaging.asset_name_for_variant(variant, upstream_tag)
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.write(
+                xcframework_root / "Info.plist",
+                arcname=f"{variant.target_name}.xcframework/Info.plist",
+            )
+        return archive_path
+
+    def _archive_checksum(self, archive_path: Path) -> str:
+        return hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
     def test_validate_package_contract_accepts_fresh_release_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
-            repo_root = temporary_root / "repo"
-            (repo_root / "scripts" / "spm").mkdir(parents=True)
-            shutil.copy2(PACKAGE_SWIFT_PATH, repo_root / "Package.swift")
-            shutil.copy2(PLATFORM_METADATA_PATH, repo_root / "scripts" / "spm" / "platforms.json")
+            cpu_metadata_path = temporary_root / "ncnn.release.json"
+            cpu_metadata_path.write_text(
+                json.dumps(
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.CPU_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum=self._archive_checksum(
+                                self._write_release_archive_fixture(
+                                    temporary_root / "cpu",
+                                    packaging.CPU_VARIANT,
+                                    "20260113",
+                                )
+                            ),
+                        ),
+                        artifact_path="/tmp/ncnn-20260113-apple.xcframework.zip",
+                    )
+                )
+            )
+            vulkan_metadata_path = temporary_root / "ncnn_vulkan.release.json"
+            vulkan_metadata_path.write_text(
+                json.dumps(
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.VULKAN_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum=self._archive_checksum(
+                                self._write_release_archive_fixture(
+                                    temporary_root / "vulkan",
+                                    packaging.VULKAN_VARIANT,
+                                    "20260113",
+                                )
+                            ),
+                        ),
+                        artifact_path="/tmp/ncnn-20260113-apple-vulkan.xcframework.zip",
+                    )
+                )
+            )
+            cpu_archive_path = temporary_root / "cpu" / packaging.asset_name_for_variant(packaging.CPU_VARIANT, "20260113")
+            vulkan_archive_path = temporary_root / "vulkan" / packaging.asset_name_for_variant(packaging.VULKAN_VARIANT, "20260113")
 
+            with mock.patch.object(validate_package_contract, "_validate_manifest") as validate_manifest:
+                observed: dict[str, object] = {}
+
+                def _capture_consumer_inputs(
+                    local_package_root: Path,
+                    package_name: str,
+                    release_inputs: list[validate_package_contract.ValidationReleaseInput],
+                ) -> None:
+                    observed["package_name"] = package_name
+                    observed["release_count"] = len(release_inputs)
+                    observed["manifest"] = (local_package_root / "Package.swift").read_text()
+                    observed["cpu_artifact_exists"] = (
+                        local_package_root / "Artifacts" / "ncnn.xcframework" / "Info.plist"
+                    ).exists()
+                    observed["vulkan_artifact_exists"] = (
+                        local_package_root / "Artifacts" / "ncnn_vulkan.xcframework" / "Info.plist"
+                    ).exists()
+
+                with mock.patch.object(
+                    validate_package_contract,
+                    "_validate_local_package_consumers",
+                    side_effect=_capture_consumer_inputs,
+                ) as validate_consumers:
+                    stdout = io.StringIO()
+                    with mock.patch("sys.stdout", stdout):
+                        exit_code = validate_package_contract.main(
+                            [
+                                "--repo-root",
+                                str(REPO_ROOT),
+                                "--release-metadata",
+                                str(cpu_metadata_path),
+                                "--release-metadata",
+                                str(vulkan_metadata_path),
+                                "--release-archive",
+                                str(cpu_archive_path),
+                                "--release-archive",
+                                str(vulkan_archive_path),
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["release_count"], 2)
+            self.assertEqual(payload["consumer_validation_count"], 2)
+            validate_manifest.assert_called_once()
+            validate_consumers.assert_called_once()
+            self.assertEqual(observed["package_name"], "ncnn")
+            self.assertEqual(observed["release_count"], 2)
+            self.assertIn('path: "Artifacts/ncnn.xcframework"', observed["manifest"])
+            self.assertIn('path: "Artifacts/ncnn_vulkan.xcframework"', observed["manifest"])
+            self.assertTrue(observed["cpu_artifact_exists"])
+            self.assertTrue(observed["vulkan_artifact_exists"])
+
+    def test_validate_package_contract_rejects_missing_release_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
             cpu_metadata_path = temporary_root / "ncnn.release.json"
             cpu_metadata_path.write_text(
                 json.dumps(
@@ -443,40 +591,80 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
                     )
                 )
             )
-            vulkan_metadata_path = temporary_root / "ncnn_vulkan.release.json"
-            vulkan_metadata_path.write_text(
+
+            stderr = io.StringIO()
+            with mock.patch("sys.stderr", stderr):
+                exit_code = validate_package_contract.main(
+                    [
+                        "--repo-root",
+                        str(REPO_ROOT),
+                        "--release-metadata",
+                        str(cpu_metadata_path),
+                        "--release-archive",
+                        str(temporary_root / "missing" / "ncnn-20260113-apple.xcframework.zip"),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("missing release archive", stderr.getvalue())
+
+    def test_validate_package_contract_rejects_checksum_drift_between_metadata_and_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            cpu_archive_path = self._write_release_archive_fixture(
+                temporary_root / "cpu",
+                packaging.CPU_VARIANT,
+                "20260113",
+            )
+            cpu_metadata_path = temporary_root / "ncnn.release.json"
+            cpu_metadata_path.write_text(
                 json.dumps(
                     packaging.build_artifact_metadata_payload(
                         packaging.ReleaseAsset(
-                            variant=packaging.VULKAN_VARIANT,
+                            variant=packaging.CPU_VARIANT,
                             upstream_tag="20260113",
                             package_tag="1.0.20260113-alpha.1",
-                            checksum="vulkan-checksum",
+                            checksum="0" * 64,
                         ),
-                        artifact_path="/tmp/ncnn-20260113-apple-vulkan.xcframework.zip",
+                        artifact_path="/tmp/ncnn-20260113-apple.xcframework.zip",
                     )
                 )
             )
 
-            process = subprocess.run(
-                [
-                    "python3",
-                    str(REPO_ROOT / "scripts" / "spm" / "validate_package_contract.py"),
-                    "--repo-root",
-                    str(repo_root),
-                    "--release-metadata",
-                    str(cpu_metadata_path),
-                    "--release-metadata",
-                    str(vulkan_metadata_path),
-                ],
-                capture_output=True,
-                text=True,
-            )
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(validate_package_contract, "_validate_manifest"),
+                mock.patch.object(validate_package_contract, "_validate_local_package_consumers"),
+                mock.patch("sys.stderr", stderr),
+            ):
+                exit_code = validate_package_contract.main(
+                    [
+                        "--repo-root",
+                        str(REPO_ROOT),
+                        "--release-metadata",
+                        str(cpu_metadata_path),
+                        "--release-archive",
+                        str(cpu_archive_path),
+                    ]
+                )
 
-            self.assertEqual(process.returncode, 0, msg=process.stderr)
-            payload = json.loads(process.stdout)
-            self.assertEqual(payload["release_count"], 2)
-            self.assertIn("package_root", payload)
+            self.assertEqual(exit_code, 1)
+            self.assertIn("checksum mismatch", stderr.getvalue())
+
+    def test_validate_package_contract_formats_subprocess_errors(self) -> None:
+        error = subprocess.CalledProcessError(
+            2,
+            ["swift", "package", "dump-package"],
+            output="manifest stdout\n",
+            stderr="manifest stderr\n",
+        )
+
+        message = validate_package_contract._describe_subprocess_error(error)
+
+        self.assertIn("command failed with exit code 2", message)
+        self.assertIn("swift package dump-package", message)
+        self.assertIn("stdout:\nmanifest stdout", message)
+        self.assertIn("stderr:\nmanifest stderr", message)
 
     def test_preflight_rejects_required_platform_drift_from_variant_contract(self) -> None:
         with self.assertRaises(ValueError):

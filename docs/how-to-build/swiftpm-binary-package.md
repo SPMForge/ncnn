@@ -202,14 +202,17 @@ Validate the generated package contract from fresh artifact metadata:
 python3 scripts/spm/validate_package_contract.py \
   --repo-root . \
   --release-metadata /tmp/ncnn-spm/ncnn/ncnn.release.json \
-  --release-metadata /tmp/ncnn-spm/ncnn_vulkan/ncnn_vulkan.release.json
+  --release-metadata /tmp/ncnn-spm/ncnn_vulkan/ncnn_vulkan.release.json \
+  --release-archive /tmp/ncnn-spm/ncnn/ncnn-20260113-apple.xcframework.zip \
+  --release-archive /tmp/ncnn-spm/ncnn_vulkan/ncnn-20260113-apple-vulkan.xcframework.zip
 ```
 
 ## CI Cache Topology
 
 - Compiler cache: `ccache`
 - Persisted cache path: `${{ github.workspace }}/.ccache`
-- Persisted with: `actions/cache@v4`
+- Homebrew download cache path: `${{ github.workspace }}/.homebrew-cache`
+- Persisted with: `actions/cache@v5`
 - Cache key dimensions: runner OS, cache schema version, resolved Xcode version, artifact variant, upstream tag
 - Restore strategy: exact key first, then same Xcode plus same variant, then same Xcode only
 - Not cached by default: `DerivedData`, `ArchiveIntermediates`, or other opaque Xcode build directories
@@ -217,18 +220,20 @@ python3 scripts/spm/validate_package_contract.py \
 Why this repo uses this shape:
 
 - The expensive part of CI is repeated C and C++ compilation across Apple slices
+- The next most common cold-start cost is downloading the `ccache` Homebrew bottle; the workflow persists Homebrew downloads separately so repeated runs do not redownload them
 - `ccache` is easier to invalidate and reason about than directory-level Xcode caches
 - Wrapper-based compiler injection keeps the cache behavior repo-local and reviewable
 
 What to verify in CI logs:
 
 - `restore-ccache` prints either `Cache restored from key` or `Cache not found`
+- `restore-homebrew-download-cache` prints either `Cache restored from key` or `Cache not found`
 - `build-ccache-stats` prints hit and miss counts after a real build
 - `Post restore-ccache` prints either `Cache saved with key` on a cold run or `Cache hit occurred on the primary key` on a warm run
 
 ## Validation Safeguards
 
-- Validation CI now checks the generated package contract from the same artifact set that produced the XCFramework zips; PR validation should not wait until the publishing workflow to discover manifest drift.
+- Validation CI now checks the generated package contract from the same artifact set that produced the XCFramework zips, including a local consumer compile against the final multi-product package; PR validation should not wait until the publishing workflow to discover manifest drift.
 - Apple platform support is preflighted before archive work starts; missing `visionOS`, `watchOS`, or other platform support should fail early with an `xcodebuild -downloadPlatform ...` hint instead of failing at the end of a long archive job.
 - Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
 - XCFramework validation rejects a flattened macOS framework slice; the macOS bundle must retain its versioned framework layout.
@@ -238,6 +243,7 @@ What to verify in CI logs:
 
 - The generated binaries are mergeable libraries. Xcode consumers should use `MERGED_BINARY_TYPE=automatic`.
 - The repo-local smoke test validates Debug consumption with `swift build` and Release consumption with `xcodebuild ... MERGED_BINARY_TYPE=automatic`, using framework-style public header imports.
+- The final package-contract gate repeats consumer validation from the aggregated package root, not only from per-variant standalone XCFrameworks.
 - `NCNNVulkan` is a distinct binary target from `NCNN`; do not assume that every Apple platform available in `NCNN` is also available in `NCNNVulkan`.
 - `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
 - Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.

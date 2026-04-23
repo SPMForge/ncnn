@@ -297,6 +297,9 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
             continue
 
         vtool_platforms = entry.get("vtool_platforms")
+        if isinstance(vtool_platforms, list) and not vtool_platforms:
+            issues.append(f"{platform}: vtool inspection missing platform identity")
+            continue
         if isinstance(vtool_platforms, list) and vtool_platforms and expected_vtool_platform not in vtool_platforms:
             issues.append(
                 f"{platform}: vtool platform mismatch, expected {expected_vtool_platform}, got {', '.join(vtool_platforms)}"

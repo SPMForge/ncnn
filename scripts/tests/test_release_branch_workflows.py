@@ -101,7 +101,9 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("if [ \"${{ inputs.release_channel }}\" = \"alpha\" ]", workflow)
         self.assertIn("runs-on: macos-15", build_job)
         self.assertNotIn("runs-on: macos-15-intel", build_job)
-        self.assertIn("uses: actions/cache@v4", build_job)
+        self.assertIn("HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache", build_job)
+        self.assertIn("restore-homebrew-download-cache", build_job)
+        self.assertIn("uses: actions/cache@v5", build_job)
         self.assertIn("path: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("CCACHE_DIR: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("resolve-xcode-version", build_job)
@@ -119,7 +121,10 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
             "${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json",
             build_job,
         )
+        self.assertIn("overwrite: true", build_job)
         self.assertIn("build-ccache-stats", build_job)
+        self.assertIn("--release-archive artifacts/ncnn/ncnn-*.xcframework.zip", workflow)
+        self.assertIn("--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip", workflow)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
         workflow = VALIDATE_WORKFLOW_PATH.read_text()
@@ -142,7 +147,9 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn('--package-tag "${{ needs.verify.outputs.package_tag }}"', workflow)
         self.assertIn("runs-on: macos-15", build_job)
         self.assertNotIn("runs-on: macos-15-intel", build_job)
-        self.assertIn("uses: actions/cache@v4", build_job)
+        self.assertIn("HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache", build_job)
+        self.assertIn("restore-homebrew-download-cache", build_job)
+        self.assertIn("uses: actions/cache@v5", build_job)
         self.assertIn("path: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("CCACHE_DIR: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("resolve-xcode-version", build_job)
@@ -160,10 +167,14 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
             "${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json",
             build_job,
         )
+        self.assertIn("actions/upload-artifact@v7", build_job)
+        self.assertIn("overwrite: true", build_job)
         self.assertIn("build-ccache-stats", build_job)
         self.assertIn("Validate generated package contract", package_contract_job)
         self.assertIn("actions/download-artifact@v8", package_contract_job)
         self.assertIn("validate-generated-package-contract", package_contract_job)
+        self.assertIn("--release-archive artifacts/ncnn/ncnn-*.xcframework.zip", package_contract_job)
+        self.assertIn("--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip", package_contract_job)
         self.assertNotIn("DEVELOPER_DIR:", workflow)
 
     def test_readme_describes_wrapper_repo_only(self) -> None:

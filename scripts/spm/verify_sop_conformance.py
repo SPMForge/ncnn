@@ -81,11 +81,26 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     require("--latest=false" in core_workflow, "alpha publishes must force latest=false")
     require("gh release upload" in core_workflow, "publish core must support repair uploads")
     require("gh api --method PATCH" in core_workflow, "publish core must normalize release metadata")
+    require("actions/cache@v5" in core_workflow, "publish core must use Node24-ready cache action")
+    require("overwrite: true" in core_workflow, "publish core artifact uploads must overwrite on rerun")
+    require(
+        "--release-archive artifacts/ncnn/ncnn-*.xcframework.zip" in core_workflow
+        and "--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip" in core_workflow,
+        "publish core must validate package contract against fresh release archives",
+    )
     require("hashFiles(" in core_workflow, "publish core must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in core_workflow, "publish core must not hardcode DEVELOPER_DIR")
     require(
         "push:" in validate_workflow and "pull_request:" in validate_workflow,
         "validation workflow must run on push and pull_request",
+    )
+    require("actions/cache@v5" in validate_workflow, "validation workflow must use Node24-ready cache action")
+    require("actions/upload-artifact@v7" in validate_workflow, "validation workflow must use Node24-ready upload action")
+    require("overwrite: true" in validate_workflow, "validation artifact uploads must overwrite on rerun")
+    require(
+        "--release-archive artifacts/ncnn/ncnn-*.xcframework.zip" in validate_workflow
+        and "--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip" in validate_workflow,
+        "validation workflow must validate package contract against fresh release archives",
     )
     require("hashFiles(" in validate_workflow, "validation workflow must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in validate_workflow, "validation workflow must not hardcode DEVELOPER_DIR")
