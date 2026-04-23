@@ -25,6 +25,18 @@ EXPECTED_VTOOL_PLATFORMS = {
     "xros": "VISIONOS",
     "xros-simulator": "VISIONOSSIMULATOR",
 }
+MACH_O_PLATFORM_CODES = {
+    1: "MACOS",
+    2: "IOS",
+    3: "TVOS",
+    4: "WATCHOS",
+    6: "MACCATALYST",
+    7: "IOSSIMULATOR",
+    8: "TVOSSIMULATOR",
+    9: "WATCHOSSIMULATOR",
+    11: "VISIONOS",
+    12: "VISIONOSSIMULATOR",
+}
 _LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+"([^"]+)"')
 _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+<([^>]+)>')
 
@@ -211,6 +223,20 @@ def _extract_archive(zip_path: Path, destination_dir: Path) -> None:
     raise SystemExit("no supported archive extractor found; install ditto or unzip")
 
 
+def _extract_platform_identities(output: str) -> list[str]:
+    identities: list[str] = []
+    for raw_platform in re.findall(r"platform\s+([A-Z0-9_]+)", output):
+        normalized = raw_platform.upper()
+        if normalized.isdigit():
+            platform_name = MACH_O_PLATFORM_CODES.get(int(normalized))
+            if platform_name is None:
+                continue
+            identities.append(platform_name)
+            continue
+        identities.append(normalized)
+    return sorted(set(identities))
+
+
 def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str, object]:
     platform = platform_key(entry)
     library_identifier = entry.get("LibraryIdentifier")
@@ -242,10 +268,18 @@ def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str,
     if binary_path is not None and binary_path.exists() and shutil.which("xcrun"):
         try:
             output = command_output(["xcrun", "vtool", "-show-build", str(binary_path)])
-            result["vtool_platforms"] = sorted(set(re.findall(r"platform\s+([A-Z0-9_]+)", output)))
+            result["vtool_platforms"] = _extract_platform_identities(output)
         except subprocess.CalledProcessError as error:
             error_output = "\n".join(part for part in [error.stdout, error.stderr] if part).strip()
             result["vtool_error"] = error_output if error_output else str(error)
+        else:
+            if not result["vtool_platforms"]:
+                try:
+                    otool_output = command_output(["xcrun", "otool", "-l", str(binary_path)])
+                    result["otool_platforms"] = _extract_platform_identities(otool_output)
+                except subprocess.CalledProcessError as error:
+                    error_output = "\n".join(part for part in [error.stdout, error.stderr] if part).strip()
+                    result["otool_error"] = error_output if error_output else str(error)
 
     return result
 
@@ -297,13 +331,20 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
             continue
 
         vtool_platforms = entry.get("vtool_platforms")
+        otool_platforms = entry.get("otool_platforms")
+        effective_platforms = vtool_platforms if isinstance(vtool_platforms, list) and vtool_platforms else otool_platforms
         if isinstance(vtool_platforms, list) and not vtool_platforms:
-            issues.append(f"{platform}: vtool inspection missing platform identity")
-            continue
-        if isinstance(vtool_platforms, list) and vtool_platforms and expected_vtool_platform not in vtool_platforms:
+            if "otool_error" in entry:
+                issues.append(f"{platform}: vtool inspection missing platform identity and otool fallback failed")
+                continue
+            if not isinstance(effective_platforms, list) or not effective_platforms:
+                issues.append(f"{platform}: vtool inspection missing platform identity")
+                continue
+        if isinstance(effective_platforms, list) and effective_platforms and expected_vtool_platform not in effective_platforms:
             issues.append(
-                f"{platform}: vtool platform mismatch, expected {expected_vtool_platform}, got {', '.join(vtool_platforms)}"
+                f"{platform}: vtool platform mismatch, expected {expected_vtool_platform}, got {', '.join(effective_platforms)}"
             )
+            continue
 
     return {
         "xcframework": str(xcframework_path),

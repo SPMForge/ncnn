@@ -293,6 +293,28 @@ jobs:
 
           python3 scripts/spm/release_state.py "${inspect_args[@]}"
 
+      - name: summarize-release-decision
+        run: |
+          missing_assets="${{ steps.release_status.outputs.missing_assets }}"
+          if [ -z "$missing_assets" ]; then
+            missing_assets="none"
+          fi
+
+          {
+            echo "### Release decision"
+            echo ""
+            echo "- upstream_tag: \`${{ needs.resolve.outputs.upstream_tag }}\`"
+            echo "- build_tag: \`${{ needs.resolve.outputs.build_tag }}\`"
+            echo "- final_package_tag: \`${{ steps.publication_plan.outputs.final_package_tag }}\`"
+            echo "- mode: \`${{ steps.release_status.outputs.mode }}\`"
+            echo "- remote_tag_exists: \`${{ steps.publication_plan.outputs.remote_tag_exists }}\`"
+            echo "- release_exists: \`${{ steps.release_status.outputs.release_exists }}\`"
+            echo "- metadata_needs_repair: \`${{ steps.release_status.outputs.metadata_needs_repair }}\`"
+            echo "- missing_assets: \`${missing_assets}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::notice title=Release decision::mode=${{ steps.release_status.outputs.mode }}, package_tag=${{ steps.publication_plan.outputs.final_package_tag }}, missing_assets=${missing_assets}, metadata_needs_repair=${{ steps.release_status.outputs.metadata_needs_repair }}"
+
       - name: validate-package-contract
         run: |
           python3 scripts/spm/validate_package_contract.py \

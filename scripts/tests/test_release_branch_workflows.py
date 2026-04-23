@@ -107,6 +107,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
     def test_publish_core_runs_packaging_verification_gates(self) -> None:
         workflow = PUBLISH_CORE_WORKFLOW_PATH.read_text()
         build_job = self._job_section(workflow, "build", "release")
+        release_job = self._job_section(workflow, "release")
         self.assertIn("python3 -m unittest", workflow)
         self.assertIn("scripts.spm.tests.test_xcframework_validation", workflow)
         self.assertIn("scripts/spm/preflight_apple_platforms.py", workflow)
@@ -137,6 +138,9 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("build-ccache-stats", build_job)
         self.assertIn("--release-archive artifacts/ncnn/ncnn-*.xcframework.zip", workflow)
         self.assertIn("--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip", workflow)
+        self.assertIn("GITHUB_STEP_SUMMARY", release_job)
+        self.assertIn("::notice title=Release decision::", release_job)
+        self.assertIn("### Release decision", release_job)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
         workflow = VALIDATE_WORKFLOW_PATH.read_text()

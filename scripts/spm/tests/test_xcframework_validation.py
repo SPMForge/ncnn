@@ -352,11 +352,50 @@ class XCFrameworkValidationTests(unittest.TestCase):
             ):
                 with mock.patch(
                     "scripts.spm.validate_mergeable_xcframework.command_output",
-                    return_value="LC_BUILD_VERSION\n    minos 13.0\n",
+                    side_effect=[
+                        "LC_BUILD_VERSION\n    minos 13.0\n",
+                        "Load command 0\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform 0\n    minos 13.0\n",
+                    ],
                 ):
                     result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["ios"])
 
             self.assertIn("ios: vtool inspection missing platform identity", result["issues"])
+
+    def test_accepts_tvos_platform_identity_from_otool_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "tvos-arm64",
+                        "LibraryPath": "ncnn.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64"],
+                        "SupportedPlatform": "tvos",
+                    }
+                ],
+            )
+            self._write_framework_bundle(
+                xcframework_path / "tvos-arm64",
+                framework_name="ncnn",
+                versioned=False,
+            )
+
+            with mock.patch(
+                "scripts.spm.validate_mergeable_xcframework.shutil.which",
+                side_effect=lambda command: f"/usr/bin/{command}",
+            ):
+                with mock.patch(
+                    "scripts.spm.validate_mergeable_xcframework.command_output",
+                    side_effect=[
+                        "LC_BUILD_VERSION\n    minos 18.0\n",
+                        "Load command 0\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform 3\n    minos 18.0\n",
+                    ],
+                ):
+                    result = validate_mergeable_xcframework.validate_xcframework(xcframework_path, ["tvos"])
+
+            self.assertEqual(result["issues"], [])
 
     def test_reports_archive_without_root_xcframework(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
