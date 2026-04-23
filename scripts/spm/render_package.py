@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 import sys
@@ -26,6 +27,10 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("--owner", default=packaging.DEFAULT_OWNER)
     parser.add_argument("--repo", default=packaging.DEFAULT_REPO)
     parser.add_argument(
+        "--package-tag-override",
+        help="Override the package tag used when rendering Package.swift and current_release.json.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Optional output path for a fully rendered static Package.swift.",
@@ -46,6 +51,18 @@ def _load_release_asset(path: Path) -> packaging.ReleaseAsset:
 def _sort_release_assets(releases: list[packaging.ReleaseAsset]) -> list[packaging.ReleaseAsset]:
     variant_order = {variant.target_name: index for index, variant in enumerate(packaging.VARIANTS)}
     return sorted(releases, key=lambda release: variant_order[release.variant.target_name])
+
+
+def _override_package_tag(
+    releases: list[packaging.ReleaseAsset],
+    package_tag_override: str | None,
+) -> list[packaging.ReleaseAsset]:
+    if not package_tag_override:
+        return releases
+    return [
+        dataclasses.replace(release, package_tag=package_tag_override)
+        for release in releases
+    ]
 
 
 def _write_combined_metadata(
@@ -81,6 +98,7 @@ def _write_combined_metadata(
 def main() -> int:
     arguments = _parse_arguments()
     releases = _sort_release_assets([_load_release_asset(path) for path in arguments.release_metadata_paths])
+    releases = _override_package_tag(releases, arguments.package_tag_override)
 
     package_contents = packaging.render_package_swift(
         package_name=arguments.package_name,

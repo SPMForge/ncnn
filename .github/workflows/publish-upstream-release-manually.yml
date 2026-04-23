@@ -29,3 +29,4 @@ jobs:
       upstream_tag: ${{ inputs.upstream_tag }}
       release_channel: ${{ inputs.release_channel }}
       artifact_prefix: spm-backfill
+      publish_to_default_branch: ${{ inputs.release_channel == 'stable' }}

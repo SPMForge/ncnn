@@ -8,7 +8,7 @@ This document describes the SwiftPM binary release flow maintained on the `main`
 - Upstream source of truth: `Tencent/ncnn` tags in `YYYYMMDD` format
 - Automated package tag format: `X.Y.Z-alpha.N`
 - Manual publish mode: `alpha` or `stable`
-- Current mapping rule: upstream tag `YYYYMMDD` becomes package version `1.0.YYYYMMDD`; automated sync publishes `1.0.YYYYMMDD-alpha.1` for the first successful package build of that upstream tag and advances to the next `1.0.YYYYMMDD-alpha.N` when `main` has moved past the latest published alpha for the same upstream snapshot; manual alpha also publishes the next `1.0.YYYYMMDD-alpha.N`, and manual stable publishes `1.0.YYYYMMDD`
+- Current mapping rule: upstream tag `YYYYMMDD` becomes package version `1.0.YYYYMMDD`; automated sync starts from `1.0.YYYYMMDD-alpha.1`, reuses the latest alpha tag when the rendered package contract still matches that tagged manifest, and advances to the next `1.0.YYYYMMDD-alpha.N` only when packaging output changes; manual alpha follows the same repair-or-advance rule, and manual stable publishes `1.0.YYYYMMDD`
 - Release metadata file: `scripts/spm/current_release.json`
 - Platform metadata file: `scripts/spm/platforms.json`
 - Source acquisition contract: `scripts/spm/source_acquisition.json`
@@ -56,12 +56,15 @@ Two GitHub Actions workflows drive the package lifecycle:
 - `.github/workflows/publish-latest-upstream-alpha.yml`
   - Scheduled latest stable release detection
   - Publishes the initial alpha prerelease for a new upstream tag as `X.Y.Z-alpha.1`
-  - Automatically advances to the next `X.Y.Z-alpha.N` when `main` contains packaging changes after the latest published alpha for that same upstream tag
+  - Reuses the latest alpha tag when the rendered package contract still matches that tagged manifest
+  - Advances to the next `X.Y.Z-alpha.N` only when the newly rendered package contract differs from the latest alpha tag
+  - Alpha publishes write the generated metadata onto a dedicated `release/<package_tag>` commit and do not update the default branch
   - Optional manual rerun
 - `.github/workflows/publish-upstream-release-manually.yml`
   - Manual publish for a specific upstream tag
   - Requires choosing `alpha` or `stable`
-  - Mints the next `X.Y.Z-alpha.N` prerelease for repeated Apple packaging fixes, or publishes the stable package tag once validation is green
+  - Alpha uses the same repair-or-advance logic as scheduled sync without updating the default branch
+  - Stable promotion publishes the stable package tag once validation is green and may update the default branch with that release commit
 - `.github/workflows/_publish-upstream-release-core.yml`
   - Shared publish core used by both publish entrypoints
   - Owns upstream tag resolution, source export, XCFramework build, manifest rendering, and GitHub Release publication
@@ -80,8 +83,9 @@ Each workflow:
 5. Runs `scripts/spm/preflight_apple_platforms.py` so missing Apple platform support fails before long archive jobs start
 6. Validates `MergeableMetadata`, binary paths, required platforms, and `vtool` platform identity
 7. Validates the generated package contract from the same fresh build metadata with `scripts/spm/validate_package_contract.py` or `swift package dump-package`
-8. Updates `scripts/spm/current_release.json` and regenerates `Package.swift`
-9. Publishes the release assets from `main` on `SPMForge/ncnn`
+8. Renders `scripts/spm/current_release.json` and `Package.swift` for the final package tag
+9. Creates or reuses a `release/<package_tag>` commit so the tag checkout contains the generated metadata
+10. Publishes the release assets from GitHub Releases; alpha paths do not update the default branch, while stable promotion may update the default branch with the tagged commit
 
 ## Local Maintenance Commands
 
@@ -248,4 +252,5 @@ What to verify in CI logs:
 - `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
 - Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.
 - Automated SwiftPM package tags are always GitHub prereleases in the alpha channel.
+- Alpha release commits do not update the default branch; they are tagged from `release/<package_tag>` so the alpha checkout still contains the generated metadata.
 - Manual publishing must explicitly choose `alpha` or `stable`. Repeated packaging fixes for the same upstream snapshot must advance `N`; stable promotion must publish the exact stable package tag once, not mutate an existing alpha release.

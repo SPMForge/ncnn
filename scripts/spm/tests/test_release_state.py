@@ -13,6 +13,37 @@ RELEASE_STATE_SCRIPT = REPO_ROOT / "scripts" / "spm" / "release_state.py"
 
 
 class ReleaseStateTests(unittest.TestCase):
+    def _init_git_repo(self, repo_root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    def _commit_package(self, repo_root: Path, package_contents: str, message: str) -> str:
+        package_path = repo_root / "Package.swift"
+        package_path.write_text(package_contents)
+        subprocess.run(["git", "add", "Package.swift"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=repo_root, check=True, capture_output=True, text=True)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
     def test_required_release_asset_names_cover_all_variants(self) -> None:
         self.assertEqual(
             release_state.required_release_asset_names("20260113"),
@@ -85,6 +116,58 @@ class ReleaseStateTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["mode"], "create")
+
+    def test_select_publication_tag_reuses_latest_alpha_when_rendered_package_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            commit_sha = self._commit_package(repo_root, "// generated manifest\n", "release alpha.1")
+            subprocess.run(
+                ["git", "tag", "1.0.20260113-alpha.1", commit_sha],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            payload = release_state.select_publication_tag(
+                repo_root=repo_root,
+                release_channel="sync",
+                build_tag="1.0.20260113-alpha.1",
+                latest_package_tag="1.0.20260113-alpha.1",
+                next_package_tag="1.0.20260113-alpha.2",
+                rendered_package_swift="// generated manifest\n",
+            )
+
+            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.1")
+            self.assertTrue(payload["remote_tag_exists"])
+            self.assertEqual(payload["remote_tag_commit"], commit_sha)
+
+    def test_select_publication_tag_advances_to_next_alpha_when_rendered_package_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            self._commit_package(repo_root, "// previous generated manifest\n", "release alpha.1")
+            subprocess.run(
+                ["git", "tag", "1.0.20260113-alpha.1"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            payload = release_state.select_publication_tag(
+                repo_root=repo_root,
+                release_channel="sync",
+                build_tag="1.0.20260113-alpha.1",
+                latest_package_tag="1.0.20260113-alpha.1",
+                next_package_tag="1.0.20260113-alpha.2",
+                rendered_package_swift="// updated generated manifest\n",
+            )
+
+            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.2")
+            self.assertFalse(payload["remote_tag_exists"])
+            self.assertEqual(payload["remote_tag_commit"], "")
 
     def test_script_writes_github_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -574,6 +574,85 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
             self.assertTrue(observed["cpu_artifact_exists"])
             self.assertTrue(observed["vulkan_artifact_exists"])
 
+    def test_validate_package_contract_applies_package_tag_override_to_rendered_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            cpu_archive_path = self._write_release_archive_fixture(
+                temporary_root / "cpu",
+                packaging.CPU_VARIANT,
+                "20260113",
+            )
+            cpu_metadata_path = temporary_root / "ncnn.release.json"
+            cpu_metadata_path.write_text(
+                json.dumps(
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.CPU_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum=self._archive_checksum(cpu_archive_path),
+                        ),
+                        artifact_path=str(cpu_archive_path),
+                    )
+                )
+            )
+            vulkan_archive_path = self._write_release_archive_fixture(
+                temporary_root / "vulkan",
+                packaging.VULKAN_VARIANT,
+                "20260113",
+            )
+            vulkan_metadata_path = temporary_root / "ncnn_vulkan.release.json"
+            vulkan_metadata_path.write_text(
+                json.dumps(
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.VULKAN_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum=self._archive_checksum(vulkan_archive_path),
+                        ),
+                        artifact_path=str(vulkan_archive_path),
+                    )
+                )
+            )
+
+            observed: dict[str, str] = {}
+            with (
+                mock.patch.object(validate_package_contract, "_validate_manifest"),
+                mock.patch.object(validate_package_contract, "_validate_local_package_consumers"),
+                mock.patch.object(validate_package_contract, "_stage_local_release_archives", return_value=temporary_root / "Artifacts"),
+            ):
+                original_render = validate_package_contract._render_release_metadata
+
+                def _capture_render(*args, **kwargs):
+                    current_release_json = original_render(*args, **kwargs)
+                    package_root = kwargs["package_root"] if "package_root" in kwargs else args[0]
+                    observed["manifest"] = (package_root / "Package.swift").read_text()
+                    observed["current_release_json"] = current_release_json.read_text()
+                    return current_release_json
+
+                with mock.patch.object(validate_package_contract, "_render_release_metadata", side_effect=_capture_render):
+                    exit_code = validate_package_contract.main(
+                        [
+                            "--repo-root",
+                            str(REPO_ROOT),
+                            "--package-tag-override",
+                            "1.0.20260113-alpha.2",
+                            "--release-metadata",
+                            str(cpu_metadata_path),
+                            "--release-metadata",
+                            str(vulkan_metadata_path),
+                            "--release-archive",
+                            str(cpu_archive_path),
+                            "--release-archive",
+                            str(vulkan_archive_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("1.0.20260113-alpha.2", observed["manifest"])
+            self.assertIn("1.0.20260113-alpha.2", observed["current_release_json"])
+
     def test_validate_package_contract_rejects_missing_release_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)

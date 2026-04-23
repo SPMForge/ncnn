@@ -77,10 +77,15 @@ def main(repo_root: Path = REPO_ROOT) -> int:
 
     require("wrapper repository" in readme, "README must describe the repo as a wrapper repository")
     require("refs/upstream-tags/*" in readme, "README must document refs/upstream-tags/*")
+    require("Alpha releases publish from `release/" in readme, "README must document alpha release branches")
+    require("Stable promotions may update the default branch" in readme, "README must document stable default-branch updates")
     require("workflow_call:" in core_workflow, "publish core must be reusable via workflow_call")
+    require("publish_to_default_branch:" in core_workflow, "publish core must make default-branch updates explicit")
     require("--latest=false" in core_workflow, "alpha publishes must force latest=false")
     require("gh release upload" in core_workflow, "publish core must support repair uploads")
     require("gh api --method PATCH" in core_workflow, "publish core must normalize release metadata")
+    require("select-publication-tag" in core_workflow, "publish core must resolve final alpha tags from rendered manifests")
+    require("release/" in core_workflow, "publish core must create release/<package_tag> refs for generated metadata commits")
     require("actions/cache@v5" in core_workflow, "publish core must use Node24-ready cache action")
     require("overwrite: true" in core_workflow, "publish core artifact uploads must overwrite on rerun")
     require(

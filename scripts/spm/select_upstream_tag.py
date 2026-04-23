@@ -95,42 +95,48 @@ def _resolve_upstream_tag(arguments: argparse.Namespace) -> str:
 
 
 def _resolve_package_tag(arguments: argparse.Namespace, upstream_tag: str) -> str:
+    build_tag, _, _ = _resolve_release_tags(arguments, upstream_tag)
+    return build_tag
+
+
+def _resolve_release_tags(arguments: argparse.Namespace, upstream_tag: str) -> tuple[str, str, str]:
     if arguments.release_channel == "stable":
-        return packaging.stable_package_tag_for_upstream_tag(upstream_tag)
+        return packaging.stable_package_tag_for_upstream_tag(upstream_tag), "", ""
 
     package_refs = _list_refs(arguments.repo_root, "refs/tags")
+    latest_alpha_tag = packaging.latest_alpha_package_tag_for_upstream_tag(upstream_tag, package_refs)
+    next_alpha_tag = packaging.package_tag_for_upstream_tag(
+        upstream_tag,
+        alpha_number=packaging.next_alpha_number_for_upstream_tag(upstream_tag, package_refs),
+    )
+
     if arguments.release_channel == "sync":
-        latest_alpha_tag = packaging.latest_alpha_package_tag_for_upstream_tag(upstream_tag, package_refs)
         if latest_alpha_tag is None:
-            return packaging.package_tag_for_upstream_tag(upstream_tag)
-
-        head_commit = _rev_parse(arguments.repo_root, "HEAD")
-        latest_alpha_commit = _rev_parse(arguments.repo_root, f"refs/tags/{latest_alpha_tag}")
-        if latest_alpha_commit == head_commit:
-            return latest_alpha_tag
-
-        alpha_number = packaging.next_alpha_number_for_upstream_tag(upstream_tag, package_refs)
-        return packaging.package_tag_for_upstream_tag(upstream_tag, alpha_number=alpha_number)
+            return next_alpha_tag, "", next_alpha_tag
+        return latest_alpha_tag, latest_alpha_tag, next_alpha_tag
 
     if arguments.release_channel not in {"alpha", "backfill"}:
-        return packaging.package_tag_for_upstream_tag(upstream_tag)
+        return packaging.package_tag_for_upstream_tag(upstream_tag), "", ""
 
-    alpha_number = packaging.next_alpha_number_for_upstream_tag(upstream_tag, package_refs)
-    return packaging.package_tag_for_upstream_tag(upstream_tag, alpha_number=alpha_number)
+    return next_alpha_tag, latest_alpha_tag or "", next_alpha_tag
 
 
 def main() -> int:
     arguments = _parse_arguments()
     upstream_tag = _resolve_upstream_tag(arguments)
-    package_tag = _resolve_package_tag(arguments, upstream_tag)
-    tag_ref = f"refs/tags/{package_tag}"
+    build_tag, latest_package_tag, next_package_tag = _resolve_release_tags(arguments, upstream_tag)
+    package_tag = build_tag
+    tag_ref = f"refs/tags/{build_tag}"
     remote_tag_exists = _ref_exists(arguments.repo_root, tag_ref)
     remote_tag_commit = _rev_parse(arguments.repo_root, tag_ref) if remote_tag_exists else ""
 
     if arguments.github_output is not None:
         with arguments.github_output.open("a") as output_file:
             output_file.write(f"upstream_tag={upstream_tag}\n")
+            output_file.write(f"build_tag={build_tag}\n")
             output_file.write(f"package_tag={package_tag}\n")
+            output_file.write(f"latest_package_tag={latest_package_tag}\n")
+            output_file.write(f"next_package_tag={next_package_tag}\n")
             output_file.write(f"remote_tag_exists={str(remote_tag_exists).lower()}\n")
             output_file.write(f"remote_tag_commit={remote_tag_commit}\n")
 
@@ -138,7 +144,10 @@ def main() -> int:
         json.dumps(
             {
                 "upstream_tag": upstream_tag,
+                "build_tag": build_tag,
                 "package_tag": package_tag,
+                "latest_package_tag": latest_package_tag,
+                "next_package_tag": next_package_tag,
                 "remote_tag_exists": remote_tag_exists,
                 "remote_tag_commit": remote_tag_commit,
             }

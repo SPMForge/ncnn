@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 if __package__ in {None, ""}:
@@ -23,6 +24,41 @@ def _load_release_view(path: Path | None) -> dict[str, object] | None:
     if not isinstance(payload, dict):
         raise ValueError("release view payload must be a JSON object")
     return payload
+
+
+def _git_show(repo_root: Path, ref_name: str, file_path: str) -> str | None:
+    process = subprocess.run(
+        ["git", "show", f"{ref_name}:{file_path}"],
+        check=False,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode != 0:
+        return None
+    return process.stdout
+
+
+def _ref_exists(repo_root: Path, ref_name: str) -> bool:
+    process = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref_name],
+        check=False,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return process.returncode == 0
+
+
+def _rev_parse(repo_root: Path, ref_name: str) -> str:
+    process = subprocess.run(
+        ["git", "rev-parse", f"{ref_name}^{{commit}}"],
+        check=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return process.stdout.strip()
 
 
 def inspect_release_state(
@@ -95,12 +131,55 @@ def inspect_release_state(
     }
 
 
+def select_publication_tag(
+    *,
+    repo_root: Path,
+    release_channel: str,
+    build_tag: str,
+    latest_package_tag: str | None,
+    next_package_tag: str | None,
+    rendered_package_swift: str,
+) -> dict[str, object]:
+    if release_channel not in {"sync", "alpha", "stable"}:
+        raise ValueError(f"unsupported release channel: {release_channel}")
+
+    final_package_tag = build_tag
+    latest_package_tag = latest_package_tag or None
+    next_package_tag = next_package_tag or None
+
+    if release_channel != "stable" and latest_package_tag is not None:
+        latest_package_swift = _git_show(repo_root, f"refs/tags/{latest_package_tag}", "Package.swift")
+        if latest_package_swift is not None and latest_package_swift == rendered_package_swift:
+            final_package_tag = latest_package_tag
+        elif next_package_tag is not None:
+            final_package_tag = next_package_tag
+        elif build_tag == latest_package_tag:
+            raise ValueError("next_package_tag is required when the latest alpha Package.swift does not match.")
+
+    tag_ref = f"refs/tags/{final_package_tag}"
+    remote_tag_exists = _ref_exists(repo_root, tag_ref)
+    remote_tag_commit = _rev_parse(repo_root, tag_ref) if remote_tag_exists else ""
+
+    return {
+        "final_package_tag": final_package_tag,
+        "remote_tag_exists": remote_tag_exists,
+        "remote_tag_commit": remote_tag_commit,
+    }
+
+
 def _write_github_output(path: Path, payload: dict[str, object]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"mode={payload['mode']}\n")
         handle.write(f"release_exists={str(payload['release_exists']).lower()}\n")
         handle.write(f"metadata_needs_repair={str(payload['metadata_needs_repair']).lower()}\n")
         handle.write(f"missing_assets={','.join(payload['missing_assets'])}\n")
+
+
+def _write_publication_github_output(path: Path, payload: dict[str, object]) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"final_package_tag={payload['final_package_tag']}\n")
+        handle.write(f"remote_tag_exists={str(payload['remote_tag_exists']).lower()}\n")
+        handle.write(f"remote_tag_commit={payload['remote_tag_commit']}\n")
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -115,6 +194,18 @@ def _parse_arguments() -> argparse.Namespace:
     inspect_parser.add_argument("--release-view-json", type=Path)
     inspect_parser.add_argument("--latest-release-tag")
     inspect_parser.add_argument("--github-output", type=Path)
+
+    publication_parser = subparsers.add_parser(
+        "select-publication-tag",
+        help="Resolve whether an alpha publish should reuse the latest tagged manifest or advance to the next alpha tag.",
+    )
+    publication_parser.add_argument("--repo-root", type=Path, default=packaging.REPO_ROOT)
+    publication_parser.add_argument("--release-channel", required=True)
+    publication_parser.add_argument("--build-tag", required=True)
+    publication_parser.add_argument("--latest-package-tag")
+    publication_parser.add_argument("--next-package-tag")
+    publication_parser.add_argument("--rendered-package-swift", required=True, type=Path)
+    publication_parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
 
 
@@ -122,22 +213,35 @@ def main() -> int:
     arguments = _parse_arguments()
 
     try:
-        if arguments.command != "inspect-release":
+        if arguments.command == "inspect-release":
+            payload = inspect_release_state(
+                package_tag=arguments.package_tag,
+                upstream_tag=arguments.upstream_tag,
+                release_channel=arguments.release_channel,
+                tag_exists=arguments.tag_exists,
+                release_view=_load_release_view(arguments.release_view_json),
+                latest_release_tag=arguments.latest_release_tag,
+            )
+        elif arguments.command == "select-publication-tag":
+            payload = select_publication_tag(
+                repo_root=arguments.repo_root,
+                release_channel=arguments.release_channel,
+                build_tag=arguments.build_tag,
+                latest_package_tag=arguments.latest_package_tag,
+                next_package_tag=arguments.next_package_tag,
+                rendered_package_swift=arguments.rendered_package_swift.read_text(encoding="utf-8"),
+            )
+        else:
             raise ValueError(f"unsupported command: {arguments.command}")
-        payload = inspect_release_state(
-            package_tag=arguments.package_tag,
-            upstream_tag=arguments.upstream_tag,
-            release_channel=arguments.release_channel,
-            tag_exists=arguments.tag_exists,
-            release_view=_load_release_view(arguments.release_view_json),
-            latest_release_tag=arguments.latest_release_tag,
-        )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
         print(str(error), file=sys.stderr)
         return 1
 
     if arguments.github_output is not None:
-        _write_github_output(arguments.github_output, payload)
+        if arguments.command == "inspect-release":
+            _write_github_output(arguments.github_output, payload)
+        else:
+            _write_publication_github_output(arguments.github_output, payload)
 
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0

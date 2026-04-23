@@ -162,7 +162,10 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
+                    "build_tag": packaging.package_tag_for_upstream_tag("20260113"),
                     "package_tag": packaging.package_tag_for_upstream_tag("20260113"),
+                    "latest_package_tag": "",
+                    "next_package_tag": packaging.package_tag_for_upstream_tag("20260113"),
                     "remote_tag_exists": False,
                     "remote_tag_commit": "",
                 },
@@ -180,7 +183,10 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
+                    "build_tag": "1.0.20260113-alpha.1",
                     "package_tag": "1.0.20260113-alpha.1",
+                    "latest_package_tag": "1.0.20260113-alpha.1",
+                    "next_package_tag": "1.0.20260113-alpha.2",
                     "remote_tag_exists": True,
                     "remote_tag_commit": subprocess.run(
                         ["git", "rev-parse", "refs/tags/1.0.20260113-alpha.1^{commit}"],
@@ -192,7 +198,7 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 },
             )
 
-    def test_sync_mode_bumps_alpha_number_when_head_has_advanced_since_latest_alpha(self) -> None:
+    def test_sync_mode_keeps_latest_alpha_as_build_tag_when_head_has_advanced_since_latest_alpha(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repo_root = Path(temporary_directory)
             self._init_git_repo(repo_root)
@@ -205,9 +211,18 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
-                    "package_tag": "1.0.20260113-alpha.2",
-                    "remote_tag_exists": False,
-                    "remote_tag_commit": "",
+                    "build_tag": "1.0.20260113-alpha.1",
+                    "package_tag": "1.0.20260113-alpha.1",
+                    "latest_package_tag": "1.0.20260113-alpha.1",
+                    "next_package_tag": "1.0.20260113-alpha.2",
+                    "remote_tag_exists": True,
+                    "remote_tag_commit": subprocess.run(
+                        ["git", "rev-parse", "refs/tags/1.0.20260113-alpha.1^{commit}"],
+                        cwd=repo_root,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip(),
                 },
             )
 
@@ -224,7 +239,10 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
+                    "build_tag": "1.0.20260113-alpha.3",
                     "package_tag": "1.0.20260113-alpha.3",
+                    "latest_package_tag": "1.0.20260113-alpha.2",
+                    "next_package_tag": "1.0.20260113-alpha.3",
                     "remote_tag_exists": False,
                     "remote_tag_commit": "",
                 },
@@ -242,7 +260,10 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
+                    "build_tag": "1.0.20260113",
                     "package_tag": "1.0.20260113",
+                    "latest_package_tag": "",
+                    "next_package_tag": "",
                     "remote_tag_exists": False,
                     "remote_tag_commit": "",
                 },
@@ -275,6 +296,9 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
             payload = json.loads(process.stdout)
             output_body = output_path.read_text()
             self.assertTrue(payload["remote_tag_exists"])
+            self.assertIn("build_tag=1.0.20260113-alpha.1", output_body)
+            self.assertIn("latest_package_tag=1.0.20260113-alpha.1", output_body)
+            self.assertIn("next_package_tag=1.0.20260113-alpha.2", output_body)
             self.assertIn("remote_tag_exists=true", output_body)
             self.assertIn(f"remote_tag_commit={payload['remote_tag_commit']}", output_body)
 

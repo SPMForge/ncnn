@@ -53,6 +53,7 @@ def _parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--package-name", default=packaging.DEFAULT_PACKAGE_NAME)
     parser.add_argument("--owner", default=packaging.DEFAULT_OWNER)
     parser.add_argument("--repo", default=packaging.DEFAULT_REPO)
+    parser.add_argument("--package-tag-override")
     return parser.parse_args(argv)
 
 
@@ -153,6 +154,7 @@ def _render_release_metadata(
     package_name: str,
     owner: str,
     repo: str,
+    package_tag_override: str | None,
 ) -> Path:
     current_release_json = package_root / "scripts" / "spm" / "current_release.json"
     command = [
@@ -169,6 +171,8 @@ def _render_release_metadata(
         "--current-release-json",
         str(current_release_json),
     ]
+    if package_tag_override:
+        command.extend(["--package-tag-override", package_tag_override])
     for release_input in release_inputs:
         command.extend(["--release-metadata", str(release_input.metadata_path)])
     _run(command, cwd=REPO_ROOT)
@@ -351,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                 package_name=arguments.package_name,
                 owner=arguments.owner,
                 repo=arguments.repo,
+                package_tag_override=arguments.package_tag_override,
             )
             _validate_manifest(rendered_package_root)
 

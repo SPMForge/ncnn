@@ -18,3 +18,4 @@ jobs:
     with:
       release_channel: sync
       artifact_prefix: spm
+      publish_to_default_branch: false
