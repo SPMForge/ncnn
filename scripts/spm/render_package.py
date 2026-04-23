@@ -40,14 +40,7 @@ def _parse_arguments() -> argparse.Namespace:
 
 
 def _load_release_asset(path: Path) -> packaging.ReleaseAsset:
-    payload = json.loads(path.read_text())
-    variant = packaging.variant_for_target_name(payload["target_name"])
-    return packaging.ReleaseAsset(
-        variant=variant,
-        upstream_tag=payload["upstream_tag"],
-        package_tag=payload["package_tag"],
-        checksum=payload["checksum"],
-    )
+    return packaging.load_build_artifact_metadata(path).release_asset
 
 
 def _sort_release_assets(releases: list[packaging.ReleaseAsset]) -> list[packaging.ReleaseAsset]:

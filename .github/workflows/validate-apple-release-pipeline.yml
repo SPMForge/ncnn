@@ -104,10 +104,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-v2-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}
+          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v2-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
-            ${{ runner.os }}-ccache-v2-${{ steps.xcode.outputs.version_key }}-
+            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
+            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
+            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-
 
       - name: install-ccache
         run: |
@@ -161,7 +162,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}
+          path: |
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
           if-no-files-found: ignore
 
       - name: build-ccache-stats

@@ -201,6 +201,59 @@ class PackageRenderingTests(unittest.TestCase):
             payload = json.loads(output_path.read_text())
             self.assertEqual(payload["package_name"], "custom-ncnn")
 
+    def test_build_artifact_metadata_payload_uses_schema_and_canonical_variant_fields(self) -> None:
+        release = packaging.ReleaseAsset(
+            variant=packaging.CPU_VARIANT,
+            upstream_tag="20260113",
+            package_tag="1.0.20260113-alpha.1",
+            checksum="cpu-checksum",
+        )
+
+        payload = packaging.build_artifact_metadata_payload(
+            release,
+            artifact_path="/tmp/ncnn-20260113-apple.xcframework.zip",
+        )
+
+        self.assertEqual(payload["schema_version"], packaging.BUILD_ARTIFACT_METADATA_SCHEMA_VERSION)
+        self.assertEqual(payload["target_name"], "ncnn")
+        self.assertEqual(payload["product_name"], "NCNN")
+        self.assertEqual(payload["module_name"], "ncnn")
+        self.assertEqual(payload["asset_name"], "ncnn-20260113-apple.xcframework.zip")
+        self.assertEqual(payload["artifact_path"], "/tmp/ncnn-20260113-apple.xcframework.zip")
+        self.assertEqual(
+            payload["platforms"],
+            [
+                "ios",
+                "ios-simulator",
+                "macos",
+                "ios-maccatalyst",
+                "tvos",
+                "tvos-simulator",
+                "watchos",
+                "watchos-simulator",
+                "xros",
+                "xros-simulator",
+            ],
+        )
+
+    def test_load_build_artifact_metadata_rejects_variant_field_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            metadata_path = Path(temporary_directory) / "ncnn.release.json"
+            payload = packaging.build_artifact_metadata_payload(
+                packaging.ReleaseAsset(
+                    variant=packaging.CPU_VARIANT,
+                    upstream_tag="20260113",
+                    package_tag="1.0.20260113-alpha.1",
+                    checksum="cpu-checksum",
+                ),
+                artifact_path="/tmp/ncnn-20260113-apple.xcframework.zip",
+            )
+            payload["asset_name"] = "ncnn-20260113-mismatch.xcframework.zip"
+            metadata_path.write_text(json.dumps(payload))
+
+            with self.assertRaisesRegex(ValueError, "asset_name"):
+                packaging.load_build_artifact_metadata(metadata_path)
+
     def test_rendered_static_manifest_is_self_contained(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             package_root = Path(temporary_directory)
@@ -379,23 +432,29 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
             cpu_metadata_path = temporary_root / "ncnn.release.json"
             cpu_metadata_path.write_text(
                 json.dumps(
-                    {
-                        "target_name": "ncnn",
-                        "upstream_tag": "20260113",
-                        "package_tag": "1.0.20260113-alpha.1",
-                        "checksum": "cpu-checksum",
-                    }
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.CPU_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum="cpu-checksum",
+                        ),
+                        artifact_path="/tmp/ncnn-20260113-apple.xcframework.zip",
+                    )
                 )
             )
             vulkan_metadata_path = temporary_root / "ncnn_vulkan.release.json"
             vulkan_metadata_path.write_text(
                 json.dumps(
-                    {
-                        "target_name": "ncnn_vulkan",
-                        "upstream_tag": "20260113",
-                        "package_tag": "1.0.20260113-alpha.1",
-                        "checksum": "vulkan-checksum",
-                    }
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.VULKAN_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum="vulkan-checksum",
+                        ),
+                        artifact_path="/tmp/ncnn-20260113-apple-vulkan.xcframework.zip",
+                    )
                 )
             )
 

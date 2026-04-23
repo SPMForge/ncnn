@@ -106,8 +106,19 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("CCACHE_DIR: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("resolve-xcode-version", build_job)
         self.assertIn("preflight-apple-platforms", build_job)
-        self.assertIn("ccache-v2", build_job)
+        self.assertIn("ccache-v3", build_job)
         self.assertIn("steps.xcode.outputs.version_key", build_job)
+        self.assertIn("hashFiles(", build_job)
+        self.assertIn("scripts/spm/build_apple_xcframework.py", build_job)
+        self.assertIn("scripts/spm/archive_builder.py", build_job)
+        self.assertIn("scripts/spm/packaging.py", build_job)
+        self.assertIn("scripts/spm/platforms.json", build_job)
+        self.assertIn("toolchains/ios.toolchain.cmake", build_job)
+        self.assertIn("${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip", build_job)
+        self.assertIn(
+            "${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json",
+            build_job,
+        )
         self.assertIn("build-ccache-stats", build_job)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
@@ -136,8 +147,19 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("CCACHE_DIR: ${{ github.workspace }}/.ccache", build_job)
         self.assertIn("resolve-xcode-version", build_job)
         self.assertIn("preflight-apple-platforms", build_job)
-        self.assertIn("ccache-v2", build_job)
+        self.assertIn("ccache-v3", build_job)
         self.assertIn("steps.xcode.outputs.version_key", build_job)
+        self.assertIn("hashFiles(", build_job)
+        self.assertIn("scripts/spm/build_apple_xcframework.py", build_job)
+        self.assertIn("scripts/spm/archive_builder.py", build_job)
+        self.assertIn("scripts/spm/packaging.py", build_job)
+        self.assertIn("scripts/spm/platforms.json", build_job)
+        self.assertIn("toolchains/ios.toolchain.cmake", build_job)
+        self.assertIn("${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip", build_job)
+        self.assertIn(
+            "${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json",
+            build_job,
+        )
         self.assertIn("build-ccache-stats", build_job)
         self.assertIn("Validate generated package contract", package_contract_job)
         self.assertIn("actions/download-artifact@v8", package_contract_job)

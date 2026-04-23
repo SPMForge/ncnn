@@ -37,6 +37,12 @@ class ReleaseAsset:
     checksum: str
 
 
+@dataclass(frozen=True)
+class BuildArtifactMetadata:
+    release_asset: ReleaseAsset
+    artifact_path: str
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_ROOT = Path(__file__).resolve().parent
 DEFAULT_PACKAGE_NAME = "ncnn"
@@ -46,6 +52,7 @@ TOOLCHAIN_FILE = REPO_ROOT / "toolchains" / "ios.toolchain.cmake"
 CURRENT_RELEASE_METADATA_PATH = SCRIPTS_ROOT / "current_release.json"
 PLATFORM_METADATA_PATH = SCRIPTS_ROOT / "platforms.json"
 PACKAGE_SWIFT_PATH = REPO_ROOT / "Package.swift"
+BUILD_ARTIFACT_METADATA_SCHEMA_VERSION = 1
 PACKAGE_PLATFORM_ORDER = ("ios", "macos", "ios-maccatalyst", "tvos", "watchos", "xros")
 PACKAGE_PLATFORM_FUNCTIONS = {
     "ios": "iOS",
@@ -239,3 +246,81 @@ def render_package_swift(package_name: str, owner: str, repo: str, releases: lis
         ]
     )
     return "\n".join(lines)
+
+
+def build_artifact_metadata_payload(release: ReleaseAsset, artifact_path: str) -> dict[str, object]:
+    if not artifact_path:
+        raise ValueError("artifact_path is required for build artifact metadata")
+
+    return {
+        "schema_version": BUILD_ARTIFACT_METADATA_SCHEMA_VERSION,
+        "target_name": release.variant.target_name,
+        "product_name": release.variant.product_name,
+        "module_name": release.variant.module_name,
+        "upstream_tag": release.upstream_tag,
+        "package_tag": release.package_tag,
+        "asset_name": asset_name_for_variant(release.variant, release.upstream_tag),
+        "artifact_path": artifact_path,
+        "checksum": release.checksum,
+        "platforms": [platform.swiftpm_platform for platform in release.variant.platforms],
+    }
+
+
+def _require_string_field(payload: dict[str, object], field_name: str, source_path: Path) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"invalid {field_name} in {source_path}")
+    return value
+
+
+def _require_string_list_field(payload: dict[str, object], field_name: str, source_path: Path) -> list[str]:
+    value = payload.get(field_name)
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"invalid {field_name} in {source_path}")
+    return value
+
+
+def load_build_artifact_metadata(path: Path) -> BuildArtifactMetadata:
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid build artifact metadata in {path}")
+
+    schema_version = payload.get("schema_version")
+    if schema_version != BUILD_ARTIFACT_METADATA_SCHEMA_VERSION:
+        raise ValueError(f"unsupported build artifact metadata schema in {path}: {schema_version!r}")
+
+    target_name = _require_string_field(payload, "target_name", path)
+    variant = variant_for_target_name(target_name)
+    upstream_tag = _require_string_field(payload, "upstream_tag", path)
+    package_tag = _require_string_field(payload, "package_tag", path)
+    checksum = _require_string_field(payload, "checksum", path)
+    artifact_path = _require_string_field(payload, "artifact_path", path)
+
+    expected_fields = {
+        "product_name": variant.product_name,
+        "module_name": variant.module_name,
+        "asset_name": asset_name_for_variant(variant, upstream_tag),
+    }
+    for field_name, expected_value in expected_fields.items():
+        actual_value = _require_string_field(payload, field_name, path)
+        if actual_value != expected_value:
+            raise ValueError(
+                f"invalid {field_name} in {path}: expected {expected_value!r}, found {actual_value!r}"
+            )
+
+    actual_platforms = _require_string_list_field(payload, "platforms", path)
+    expected_platforms = [platform.swiftpm_platform for platform in variant.platforms]
+    if actual_platforms != expected_platforms:
+        raise ValueError(
+            f"invalid platforms in {path}: expected {expected_platforms!r}, found {actual_platforms!r}"
+        )
+
+    return BuildArtifactMetadata(
+        release_asset=ReleaseAsset(
+            variant=variant,
+            upstream_tag=upstream_tag,
+            package_tag=package_tag,
+            checksum=checksum,
+        ),
+        artifact_path=artifact_path,
+    )

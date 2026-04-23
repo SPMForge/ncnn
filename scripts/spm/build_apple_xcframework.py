@@ -398,17 +398,15 @@ def _write_release_metadata(
     checksum: str,
     zip_path: Path,
 ) -> None:
-    payload = {
-        "target_name": variant.target_name,
-        "product_name": variant.product_name,
-        "module_name": variant.module_name,
-        "upstream_tag": upstream_tag,
-        "package_tag": package_tag,
-        "asset_name": packaging.asset_name_for_variant(variant, upstream_tag),
-        "artifact_path": str(zip_path),
-        "checksum": checksum,
-        "platforms": [platform.swiftpm_platform for platform in variant.platforms],
-    }
+    payload = packaging.build_artifact_metadata_payload(
+        packaging.ReleaseAsset(
+            variant=variant,
+            upstream_tag=upstream_tag,
+            package_tag=package_tag,
+            checksum=checksum,
+        ),
+        artifact_path=str(zip_path),
+    )
     output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 

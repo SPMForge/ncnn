@@ -81,11 +81,13 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     require("--latest=false" in core_workflow, "alpha publishes must force latest=false")
     require("gh release upload" in core_workflow, "publish core must support repair uploads")
     require("gh api --method PATCH" in core_workflow, "publish core must normalize release metadata")
+    require("hashFiles(" in core_workflow, "publish core must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in core_workflow, "publish core must not hardcode DEVELOPER_DIR")
     require(
         "push:" in validate_workflow and "pull_request:" in validate_workflow,
         "validation workflow must run on push and pull_request",
     )
+    require("hashFiles(" in validate_workflow, "validation workflow must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in validate_workflow, "validation workflow must not hardcode DEVELOPER_DIR")
     require('path: "Artifacts/' not in package_swift, "committed Package.swift must not use repo-local artifact paths")
     require("FileManager.default.fileExists" not in package_swift, "committed Package.swift must not switch on local checkout state")
