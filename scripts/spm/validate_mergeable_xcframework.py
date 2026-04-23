@@ -37,6 +37,12 @@ MACH_O_PLATFORM_CODES = {
     11: "VISIONOS",
     12: "VISIONOSSIMULATOR",
 }
+LEGACY_MIN_VERSION_PLATFORMS = {
+    "LC_VERSION_MIN_IPHONEOS": "IOS",
+    "LC_VERSION_MIN_MACOSX": "MACOS",
+    "LC_VERSION_MIN_TVOS": "TVOS",
+    "LC_VERSION_MIN_WATCHOS": "WATCHOS",
+}
 _LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+"([^"]+)"')
 _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+<([^>]+)>')
 
@@ -234,6 +240,13 @@ def _extract_platform_identities(output: str) -> list[str]:
             identities.append(platform_name)
             continue
         identities.append(normalized)
+    if identities:
+        return sorted(set(identities))
+
+    normalized_output = output.upper()
+    for load_command, platform_name in LEGACY_MIN_VERSION_PLATFORMS.items():
+        if load_command in normalized_output:
+            identities.append(platform_name)
     return sorted(set(identities))
 
 
