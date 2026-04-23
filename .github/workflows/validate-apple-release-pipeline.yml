@@ -108,7 +108,8 @@ jobs:
           key: ${{ runner.os }}-homebrew-downloads-v1-ccache
 
       - name: restore-ccache
-        uses: actions/cache@v5
+        id: restore_ccache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
@@ -141,6 +142,7 @@ jobs:
             --destination "$RUNNER_TEMP/upstream-source"
 
       - name: build-xcframework
+        id: build_xcframework
         run: |
           python3 scripts/spm/build_apple_xcframework.py \
             --variant "${{ matrix.variant }}" \
@@ -148,6 +150,33 @@ jobs:
             --package-tag "${{ needs.verify.outputs.package_tag }}" \
             --source-root "$RUNNER_TEMP/upstream-source" \
             --output-dir "$RUNNER_TEMP/spm-artifacts"
+
+      - name: verify-ccache-payload
+        id: verify_ccache_payload
+        run: |
+          payload_file="$(
+            find "$CCACHE_DIR" \
+              -type f \
+              ! -path "$CCACHE_DIR/tmp/*" \
+              ! -name "stats" \
+              ! -name "stats.lock" \
+              ! -name "ccache.conf" \
+              ! -name "CACHEDIR.TAG" \
+              ! -name ".DS_Store" \
+              -print -quit
+          )"
+          if [ -z "$payload_file" ]; then
+            echo "compiler cache remained empty after build-xcframework" >&2
+            exit 1
+          fi
+          echo "payload_file=$payload_file" >> "$GITHUB_OUTPUT"
+
+      - name: save-ccache
+        if: ${{ !cancelled() && steps.restore_ccache.outcome == 'success' && steps.build_xcframework.outcome == 'success' && steps.verify_ccache_payload.outcome == 'success' && steps.restore_ccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ${{ steps.restore_ccache.outputs.cache-primary-key }}
 
       - name: validate-xcframework
         run: |
