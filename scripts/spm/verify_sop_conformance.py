@@ -72,6 +72,8 @@ def main(repo_root: Path = REPO_ROOT) -> int:
 
     readme = read_text(repo_root / "README.md")
     core_workflow = read_text(workflows_dir / "_publish-upstream-release-core.yml")
+    sync_workflow = read_text(workflows_dir / "publish-latest-upstream-alpha.yml")
+    manual_workflow = read_text(workflows_dir / "publish-upstream-release-manually.yml")
     validate_workflow = read_text(workflows_dir / "validate-apple-release-pipeline.yml")
     package_swift = read_text(repo_root / "Package.swift")
 
@@ -81,6 +83,21 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     require("Stable promotions may update the default branch" in readme, "README must document stable default-branch updates")
     require("workflow_call:" in core_workflow, "publish core must be reusable via workflow_call")
     require("publish_to_default_branch:" in core_workflow, "publish core must make default-branch updates explicit")
+    require(
+        "publish_to_default_branch is only supported for stable releases." in core_workflow,
+        "publish core must fail loudly when non-stable channels request default-branch writes",
+    )
+    require(
+        "publish_to_default_branch: false" in sync_workflow,
+        "auto alpha workflow must not write the default branch",
+    )
+    require(
+        "publish_to_default_branch:" in manual_workflow
+        and "type: boolean" in manual_workflow
+        and "default: false" in manual_workflow
+        and "inputs.release_channel == 'stable' && inputs.publish_to_default_branch" in manual_workflow,
+        "manual workflow must expose an explicit stable-only default-branch publish choice",
+    )
     require("--latest=false" in core_workflow, "alpha publishes must force latest=false")
     require("gh release upload" in core_workflow, "publish core must support repair uploads")
     require("gh api --method PATCH" in core_workflow, "publish core must normalize release metadata")

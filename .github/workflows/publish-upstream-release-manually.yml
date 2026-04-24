@@ -14,6 +14,11 @@ on:
         options:
           - alpha
           - stable
+      publish_to_default_branch:
+        description: Also update the default branch Package.swift and current_release.json for a stable publish.
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,4 +34,4 @@ jobs:
       upstream_tag: ${{ inputs.upstream_tag }}
       release_channel: ${{ inputs.release_channel }}
       artifact_prefix: spm-backfill
-      publish_to_default_branch: ${{ inputs.release_channel == 'stable' }}
+      publish_to_default_branch: ${{ inputs.release_channel == 'stable' && inputs.publish_to_default_branch }}

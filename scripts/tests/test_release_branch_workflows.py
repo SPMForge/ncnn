@@ -56,7 +56,14 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("uses: ./.github/workflows/_publish-upstream-release-core.yml", workflow)
         self.assertIn('upstream_tag: ${{ inputs.upstream_tag }}', workflow)
         self.assertIn('release_channel: ${{ inputs.release_channel }}', workflow)
-        self.assertIn("publish_to_default_branch: ${{ inputs.release_channel == 'stable' }}", workflow)
+        self.assertIn("publish_to_default_branch:", workflow)
+        self.assertIn("type: boolean", workflow)
+        self.assertIn("default: false", workflow)
+        self.assertIn(
+            "publish_to_default_branch: ${{ inputs.release_channel == 'stable' && inputs.publish_to_default_branch }}",
+            workflow,
+        )
+        self.assertNotIn("publish_to_default_branch: ${{ inputs.release_channel == 'stable' }}", workflow)
         self.assertNotIn("gh release create", workflow)
 
     def test_publish_core_workflow_owns_release_steps(self) -> None:
@@ -68,6 +75,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertNotIn("schedule:", workflow)
         self.assertIn("release_channel:", workflow)
         self.assertIn("publish_to_default_branch:", workflow)
+        self.assertIn("publish_to_default_branch is only supported for stable releases.", workflow)
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
         self.assertIn("scripts/spm/release_state.py", workflow)
         self.assertIn("inspect-release", workflow)
@@ -84,8 +92,16 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn('git ls-remote --exit-code --heads origin "refs/heads/${release_branch}"', workflow)
         self.assertIn('git fetch origin "refs/heads/${release_branch}:refs/remotes/origin/${release_branch}"', workflow)
         self.assertIn('git show "refs/remotes/origin/${release_branch}:Package.swift"', workflow)
+        self.assertIn('git show "refs/remotes/origin/${release_branch}:scripts/spm/current_release.json"', workflow)
+        self.assertIn('git tag "${{ steps.publication_plan.outputs.final_package_tag }}" "${commit_sha}"', workflow)
+        self.assertIn('git push origin "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}"', workflow)
         self.assertIn('git push origin "HEAD:refs/heads/${release_branch}"', workflow)
-        self.assertIn('if: ${{ inputs.publish_to_default_branch && steps.release_status.outputs.mode != \'skip\' }}', workflow)
+        self.assertIn("release_args+=(--prerelease --latest=false)", workflow)
+        self.assertIn("-F make_latest=false", workflow)
+        self.assertIn(
+            "if: ${{ inputs.publish_to_default_branch && inputs.release_channel == 'stable' && steps.release_status.outputs.mode != 'skip' }}",
+            workflow,
+        )
         self.assertIn('TARGET_BRANCH="${{ github.event.repository.default_branch || \'main\' }}"', workflow)
         self.assertNotIn("DEVELOPER_DIR:", workflow)
 

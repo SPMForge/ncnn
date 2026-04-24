@@ -41,7 +41,8 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 - Stable package tags require explicit manual intent.
 - Alpha releases publish from `release/<package_tag>` commits so the tagged checkout carries the generated metadata without forcing those commits onto the default branch.
 - Scheduled alpha publishes reuse the latest alpha tag when the rendered package contract still matches that tagged manifest, and advance to the next `X.Y.Z-alpha.N` only when packaging output changes. Manual alpha publishes use the same repair-or-advance rule.
-- Stable promotions may update the default branch with the tagged release commit so the committed `Package.swift` and `scripts/spm/current_release.json` remain the canonical stable metadata.
+- Stable promotions may update the default branch only when the manual workflow operator explicitly enables `publish_to_default_branch`; alpha paths never write the default branch.
+- If `release/<package_tag>` already exists but the tag or GitHub Release is incomplete, reruns reuse the matching release-branch commit; a mismatched generated `Package.swift` or `scripts/spm/current_release.json` fails loudly.
 - `Package.swift` should not be hand-edited for releases; the release pipeline regenerates it from `scripts/spm/current_release.json`.
 
 ## Documentation

@@ -34,6 +34,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: reject-default-branch-publish-for-non-stable
+        if: ${{ inputs.publish_to_default_branch && inputs.release_channel != 'stable' }}
+        run: |
+          echo "publish_to_default_branch is only supported for stable releases." >&2
+          exit 1
+
       - name: run-packaging-unit-tests
         run: |
           python3 -m unittest \
@@ -508,7 +514,7 @@ jobs:
           fi
 
       - name: select-release-commit
-        if: ${{ inputs.publish_to_default_branch && steps.release_status.outputs.mode != 'skip' }}
+        if: ${{ inputs.publish_to_default_branch && inputs.release_channel == 'stable' && steps.release_status.outputs.mode != 'skip' }}
         id: release_commit
         run: |
           if [[ "${{ steps.publication_plan.outputs.remote_tag_exists }}" == "true" ]]; then
@@ -518,7 +524,7 @@ jobs:
           fi
 
       - name: optionally-update-default-branch
-        if: ${{ inputs.publish_to_default_branch && steps.release_status.outputs.mode != 'skip' }}
+        if: ${{ inputs.publish_to_default_branch && inputs.release_channel == 'stable' && steps.release_status.outputs.mode != 'skip' }}
         run: |
           TARGET_BRANCH="${{ github.event.repository.default_branch || 'main' }}"
           git push origin "${{ steps.release_commit.outputs.commit_sha }}:refs/heads/${TARGET_BRANCH}"
