@@ -4,9 +4,9 @@
   "releases": [
     {
       "asset_name": "ncnn-20260113-apple.xcframework.zip",
-      "checksum": "1ee69cb9e83b59fe69afe374becd0d2b94292edbc1eff9d91cb7a5cf5f84ef6a",
+      "checksum": "7da27da756d3af8103e3afe4bfc87ed705cbfb6cf40d9e39be1e2963b034d636",
       "module_name": "ncnn",
-      "package_tag": "1.0.20260113-alpha.5",
+      "package_tag": "1.0.20260113-alpha.9",
       "platforms": [
         "ios",
         "ios-simulator",
@@ -22,13 +22,13 @@
       "product_name": "NCNN",
       "target_name": "ncnn",
       "upstream_tag": "20260113",
-      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple.xcframework.zip"
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.9/ncnn-20260113-apple.xcframework.zip"
     },
     {
       "asset_name": "ncnn-20260113-apple-vulkan.xcframework.zip",
-      "checksum": "c427c1f8e5979e429203d09cecd5c83fe2538693744ab4ca297a81d7debde213",
+      "checksum": "77a6794fdbb31dc228a58378fe2b86a52f0830b97614bf97514153f43fcdb20b",
       "module_name": "ncnn_vulkan",
-      "package_tag": "1.0.20260113-alpha.5",
+      "package_tag": "1.0.20260113-alpha.9",
       "platforms": [
         "ios",
         "ios-simulator",
@@ -42,7 +42,7 @@
       "product_name": "NCNNVulkan",
       "target_name": "ncnn_vulkan",
       "upstream_tag": "20260113",
-      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple-vulkan.xcframework.zip"
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.9/ncnn-20260113-apple-vulkan.xcframework.zip"
     }
   ],
   "repo": "ncnn"
