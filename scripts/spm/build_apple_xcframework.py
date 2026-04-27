@@ -414,6 +414,7 @@ def _validate_xcframework(xcframework_path: Path, variant: packaging.Variant) ->
     result = validate_mergeable_xcframework.validate_xcframework(
         xcframework_path,
         [platform.swiftpm_platform for platform in variant.platforms],
+        require_weak_dependencies=packaging.required_weak_dependencies_for_variant(variant),
     )
     if result["issues"]:
         print(json.dumps({"xcframeworks": [result]}, indent=2), file=sys.stderr)

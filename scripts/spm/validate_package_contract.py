@@ -17,6 +17,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.spm import packaging
+from scripts.spm import validate_mergeable_xcframework
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -146,6 +147,24 @@ def _load_release_inputs(
 
     variant_order = {variant.target_name: index for index, variant in enumerate(packaging.VARIANTS)}
     return sorted(release_inputs, key=lambda item: variant_order[item.build_metadata.release_asset.variant.target_name])
+
+
+def _validate_release_archives(release_inputs: list[ValidationReleaseInput]) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for release_input in release_inputs:
+        variant = release_input.build_metadata.release_asset.variant
+        result = validate_mergeable_xcframework.validate_xcframework(
+            release_input.archive_path,
+            [platform.swiftpm_platform for platform in variant.platforms],
+            require_weak_dependencies=packaging.required_weak_dependencies_for_variant(variant),
+        )
+        if result["issues"]:
+            raise ValueError(
+                f"xcframework validation failed for {variant.target_name}: "
+                + "; ".join(str(issue) for issue in result["issues"])
+            )
+        results.append(result)
+    return results
 
 
 def _render_release_metadata(
@@ -344,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
             release_metadata_paths=arguments.release_metadata_paths,
             release_archive_paths=arguments.release_archive_paths,
         )
+        archive_validation_results = _validate_release_archives(release_inputs)
         with tempfile.TemporaryDirectory(prefix="ncnn-package-contract-") as temporary_directory:
             validation_root = Path(temporary_directory)
 
@@ -367,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 json.dumps(
                     {
+                        "archive_validation_count": len(archive_validation_results),
                         "consumer_validation_count": len(release_inputs),
                         "current_release_json": str(current_release_json),
                         "release_count": len(release_inputs),

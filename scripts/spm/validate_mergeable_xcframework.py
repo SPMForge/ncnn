@@ -45,6 +45,9 @@ LEGACY_MIN_VERSION_PLATFORMS = {
 }
 _LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+"([^"]+)"')
 _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^\s*#\s*(?:include|import)\s+<([^>]+)>')
+_OTOOL_ARCH_HEADER_PATTERN = re.compile(r"^.+ \(architecture ([^)]+)\):$")
+_OTOOL_SINGLE_HEADER_PATTERN = re.compile(r"^.+:$")
+_OTOOL_DEPENDENCY_PATTERN = re.compile(r"^\s+(\S+)\s+\((.*)\)$")
 
 
 def command_output(arguments: list[str]) -> str:
@@ -250,7 +253,80 @@ def _extract_platform_identities(output: str) -> list[str]:
     return sorted(set(identities))
 
 
-def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str, object]:
+def _parse_otool_dependencies(output: str) -> dict[str, dict[str, dict[str, bool]]]:
+    dependencies_by_arch: dict[str, dict[str, dict[str, bool]]] = {}
+    current_architecture = "default"
+    for line in output.splitlines():
+        arch_header_match = _OTOOL_ARCH_HEADER_PATTERN.match(line)
+        if arch_header_match:
+            current_architecture = arch_header_match.group(1)
+            dependencies_by_arch.setdefault(current_architecture, {})
+            continue
+
+        if _OTOOL_SINGLE_HEADER_PATTERN.match(line) and not line.startswith((" ", "\t")):
+            dependencies_by_arch.setdefault(current_architecture, {})
+            continue
+
+        match = _OTOOL_DEPENDENCY_PATTERN.match(line)
+        if not match:
+            continue
+        dependency_path = match.group(1)
+        attributes = {part.strip() for part in match.group(2).split(",")}
+        dependency_is_weak = "weak" in attributes
+        dependencies = dependencies_by_arch.setdefault(current_architecture, {})
+        existing_dependency = dependencies.get(dependency_path)
+        if existing_dependency is None:
+            dependencies[dependency_path] = {"weak": dependency_is_weak}
+        else:
+            existing_dependency["weak"] = existing_dependency["weak"] and dependency_is_weak
+    return dependencies_by_arch
+
+
+def _dependency_issues(
+    platform: str,
+    dependencies_by_arch: dict[str, dict[str, dict[str, bool]]],
+    require_weak_dependencies: list[str],
+    expected_architectures: list[str],
+) -> list[str]:
+    issues: list[str] = []
+    if not dependencies_by_arch:
+        dependencies_by_arch = {"default": {}}
+
+    if set(dependencies_by_arch) == {"default"}:
+        dependencies_to_check = dependencies_by_arch
+    elif expected_architectures:
+        dependencies_to_check = {
+            architecture: dependencies_by_arch.get(architecture, {})
+            for architecture in expected_architectures
+        }
+    else:
+        dependencies_to_check = dependencies_by_arch
+
+    for dependency_path in require_weak_dependencies:
+        missing_architectures = [
+            architecture
+            for architecture, dependencies in dependencies_to_check.items()
+            if dependency_path not in dependencies
+        ]
+        if missing_architectures:
+            issues.append(f"{platform}: missing required dependency {dependency_path}")
+            continue
+        strong_architectures = [
+            architecture
+            for architecture, dependencies in dependencies_to_check.items()
+            if not dependencies[dependency_path].get("weak", False)
+        ]
+        if strong_architectures:
+            issues.append(f"{platform}: required dependency {dependency_path} must be weak-linked")
+    return issues
+
+
+def inspect_entry(
+    xcframework_path: Path,
+    entry: dict[str, object],
+    require_weak_dependencies: list[str] | None = None,
+) -> dict[str, object]:
+    require_weak_dependencies = require_weak_dependencies or []
     platform = platform_key(entry)
     library_identifier = entry.get("LibraryIdentifier")
     binary_path = None
@@ -294,10 +370,29 @@ def inspect_entry(xcframework_path: Path, entry: dict[str, object]) -> dict[str,
                     error_output = "\n".join(part for part in [error.stdout, error.stderr] if part).strip()
                     result["otool_error"] = error_output if error_output else str(error)
 
+        if require_weak_dependencies:
+            try:
+                otool_load_output = command_output(["xcrun", "otool", "-L", str(binary_path)])
+                dependencies_by_arch = _parse_otool_dependencies(otool_load_output)
+                result["dependencies"] = dependencies_by_arch
+                result["dependency_issues"] = _dependency_issues(
+                    platform,
+                    dependencies_by_arch,
+                    require_weak_dependencies,
+                    [str(architecture) for architecture in result["architectures"]],
+                )
+            except subprocess.CalledProcessError as error:
+                error_output = "\n".join(part for part in [error.stdout, error.stderr] if part).strip()
+                result["dependency_error"] = error_output if error_output else str(error)
+
     return result
 
 
-def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
+def inspect_xcframework(
+    xcframework_path: Path,
+    require_weak_dependencies: list[str] | None = None,
+) -> dict[str, object]:
+    require_weak_dependencies = require_weak_dependencies or []
     info_path = xcframework_path / "Info.plist"
     if not info_path.exists():
         return {
@@ -315,7 +410,11 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
             "entries": [],
         }
 
-    entries = [inspect_entry(xcframework_path, entry) for entry in available if isinstance(entry, dict)]
+    entries = [
+        inspect_entry(xcframework_path, entry, require_weak_dependencies=require_weak_dependencies)
+        for entry in available
+        if isinstance(entry, dict)
+    ]
     issues: list[str] = []
 
     for entry in entries:
@@ -333,6 +432,10 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
                 issues.append(f"{platform}: framework bundle must use versioned macOS layout")
             for framework_issue in entry.get("framework_interface_issues", []):
                 issues.append(f"{platform}: {framework_issue}")
+        if "dependency_error" in entry:
+            issues.append(f"{platform}: dependency inspection failed")
+        for dependency_issue in entry.get("dependency_issues", []):
+            issues.append(str(dependency_issue))
 
         expected_vtool_platform = EXPECTED_VTOOL_PLATFORMS.get(platform)
         if expected_vtool_platform is None:
@@ -366,7 +469,24 @@ def inspect_xcframework(xcframework_path: Path) -> dict[str, object]:
     }
 
 
-def validate_xcframework(xcframework_path: Path, required_platforms: list[str]) -> dict[str, object]:
+def validate_xcframework(
+    xcframework_path: Path,
+    required_platforms: list[str],
+    require_weak_dependencies: list[str] | None = None,
+) -> dict[str, object]:
+    return validate_xcframework_with_options(
+        xcframework_path,
+        required_platforms,
+        require_weak_dependencies=require_weak_dependencies,
+    )
+
+
+def validate_xcframework_with_options(
+    xcframework_path: Path,
+    required_platforms: list[str],
+    require_weak_dependencies: list[str] | None = None,
+) -> dict[str, object]:
+    require_weak_dependencies = require_weak_dependencies or []
     if xcframework_path.is_file():
         root_xcframeworks = _archive_root_xcframework_names(xcframework_path)
         issues: list[str] = []
@@ -380,7 +500,10 @@ def validate_xcframework(xcframework_path: Path, required_platforms: list[str]) 
             temporary_root = Path(temporary_directory)
             _extract_archive(xcframework_path, temporary_root)
             extracted_xcframework = temporary_root / root_xcframeworks[0]
-            result = inspect_xcframework(extracted_xcframework)
+            result = inspect_xcframework(
+                extracted_xcframework,
+                require_weak_dependencies=require_weak_dependencies,
+            )
         available_platforms = sorted(str(entry["platform"]) for entry in result["entries"])
         missing_platforms = sorted(set(required_platforms) - set(available_platforms))
         if missing_platforms:
@@ -388,7 +511,7 @@ def validate_xcframework(xcframework_path: Path, required_platforms: list[str]) 
         result["xcframework"] = str(xcframework_path)
         return result
 
-    result = inspect_xcframework(xcframework_path)
+    result = inspect_xcframework(xcframework_path, require_weak_dependencies=require_weak_dependencies)
     available_platforms = sorted(str(entry["platform"]) for entry in result["entries"])
     missing_platforms = sorted(set(required_platforms) - set(available_platforms))
     if missing_platforms:
@@ -405,9 +528,22 @@ def main() -> int:
         default=[],
         help="Require an XCFramework platform key such as ios, ios-simulator, ios-maccatalyst, macos, tvos, watchos, or xros.",
     )
+    parser.add_argument(
+        "--require-weak-dependency",
+        action="append",
+        default=[],
+        help="Require each slice binary to weak-link the given install name, such as @rpath/libvulkan.dylib.",
+    )
     arguments = parser.parse_args()
 
-    results = [validate_xcframework(path, arguments.require_platform) for path in discover_xcframeworks(arguments.paths)]
+    results = [
+        validate_xcframework_with_options(
+            path,
+            arguments.require_platform,
+            require_weak_dependencies=arguments.require_weak_dependency,
+        )
+        for path in discover_xcframeworks(arguments.paths)
+    ]
     exit_code = 0 if all(not result["issues"] for result in results) else 1
     print(json.dumps({"xcframeworks": results}, indent=2))
     return exit_code

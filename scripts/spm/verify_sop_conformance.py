@@ -75,6 +75,8 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     sync_workflow = read_text(workflows_dir / "publish-latest-upstream-alpha.yml")
     manual_workflow = read_text(workflows_dir / "publish-upstream-release-manually.yml")
     validate_workflow = read_text(workflows_dir / "validate-apple-release-pipeline.yml")
+    release_document = read_text(repo_root / "docs" / "how-to-build" / "swiftpm-binary-package.md")
+    packaging_script = read_text(repo_root / "scripts" / "spm" / "packaging.py")
     package_swift = read_text(repo_root / "Package.swift")
 
     require("wrapper repository" in readme, "README must describe the repo as a wrapper repository")
@@ -126,6 +128,10 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         and "--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip" in core_workflow,
         "publish core must validate package contract against fresh release archives",
     )
+    require(
+        "--require-weak-dependency @rpath/libvulkan.dylib" in core_workflow,
+        "publish core must validate the NCNNVulkan weak Vulkan loader dependency",
+    )
     require("hashFiles(" in core_workflow, "publish core must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in core_workflow, "publish core must not hardcode DEVELOPER_DIR")
     require(
@@ -156,8 +162,23 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         and "--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip" in validate_workflow,
         "validation workflow must validate package contract against fresh release archives",
     )
+    require(
+        "--require-weak-dependency @rpath/libvulkan.dylib" in validate_workflow,
+        "validation workflow must validate the NCNNVulkan weak Vulkan loader dependency",
+    )
     require("hashFiles(" in validate_workflow, "validation workflow must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in validate_workflow, "validation workflow must not hardcode DEVELOPER_DIR")
+    require(
+        "runtime_dependency_model" in packaging_script
+        and "weak_runtime_dependencies" in packaging_script,
+        "packaging contract must record runtime dependency model and weak runtime dependencies",
+    )
+    require(
+        "Runtime contract record" in release_document
+        and "model: `weak-link`" in release_document
+        and "install name: `@rpath/libvulkan.dylib`" in release_document,
+        "release documentation must record the NCNNVulkan runtime dependency contract",
+    )
     require('path: "Artifacts/' not in package_swift, "committed Package.swift must not use repo-local artifact paths")
     require("FileManager.default.fileExists" not in package_swift, "committed Package.swift must not switch on local checkout state")
     _assert_no_hardcoded_deployment_targets(

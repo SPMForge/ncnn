@@ -80,6 +80,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/spm/release_state.py", workflow)
         self.assertIn("inspect-release", workflow)
         self.assertIn("select-publication-tag", workflow)
+        self.assertIn('--rendered-current-release-json "$RUNNER_TEMP/candidate-current-release.json"', workflow)
         self.assertIn("scripts/spm/source_acquisition.py export-source", workflow)
         self.assertIn("--output Package.swift", workflow)
         self.assertIn('--package-tag "${{ needs.resolve.outputs.build_tag }}"', workflow)
@@ -117,6 +118,9 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("preflight_apple_platforms.py", document)
         self.assertIn("validate_package_contract.py", document)
         self.assertIn("ccache", document)
+        self.assertIn("Runtime contract record", document)
+        self.assertIn("model: `weak-link`", document)
+        self.assertIn("install name: `@rpath/libvulkan.dylib`", document)
         self.assertNotIn("synchwithupstream", document)
         self.assertNotIn("local-debug convenience", document)
 
@@ -128,6 +132,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("scripts.spm.tests.test_xcframework_validation", workflow)
         self.assertIn("scripts/spm/preflight_apple_platforms.py", workflow)
         self.assertIn("scripts/spm/validate_mergeable_xcframework.py", workflow)
+        self.assertIn("--require-weak-dependency @rpath/libvulkan.dylib", build_job)
         self.assertIn("runs-on: macos-15", build_job)
         self.assertNotIn("runs-on: macos-15-intel", build_job)
         self.assertIn("HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache", build_job)
@@ -168,6 +173,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("GITHUB_STEP_SUMMARY", release_job)
         self.assertIn("::notice title=Release decision::", release_job)
         self.assertIn("### Release decision", release_job)
+        self.assertIn("Vulkan runtime contract: NCNNVulkan weak-links @rpath/libvulkan.dylib", release_job)
 
     def test_validate_workflow_runs_on_push_and_pull_request(self) -> None:
         workflow = VALIDATE_WORKFLOW_PATH.read_text()
@@ -184,6 +190,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/spm/preflight_apple_platforms.py", workflow)
         self.assertIn("scripts/spm/validate_package_contract.py", workflow)
         self.assertIn("scripts/spm/validate_mergeable_xcframework.py", workflow)
+        self.assertIn("--require-weak-dependency @rpath/libvulkan.dylib", build_job)
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
         self.assertIn("--explicit-tag \"${{ inputs.upstream_tag }}\"", workflow)
         self.assertIn("package_tag: ${{ steps.resolve.outputs.package_tag }}", workflow)

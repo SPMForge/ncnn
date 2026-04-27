@@ -20,9 +20,11 @@
         "xros-simulator"
       ],
       "product_name": "NCNN",
+      "runtime_dependency_model": "none",
       "target_name": "ncnn",
       "upstream_tag": "20260113",
-      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple.xcframework.zip"
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple.xcframework.zip",
+      "weak_runtime_dependencies": []
     },
     {
       "asset_name": "ncnn-20260113-apple-vulkan.xcframework.zip",
@@ -40,9 +42,13 @@
         "xros-simulator"
       ],
       "product_name": "NCNNVulkan",
+      "runtime_dependency_model": "weak-link",
       "target_name": "ncnn_vulkan",
       "upstream_tag": "20260113",
-      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple-vulkan.xcframework.zip"
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple-vulkan.xcframework.zip",
+      "weak_runtime_dependencies": [
+        "@rpath/libvulkan.dylib"
+      ]
     }
   ],
   "repo": "ncnn"

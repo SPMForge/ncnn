@@ -44,6 +44,8 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 - Stable promotions may update the default branch only when the manual workflow operator explicitly enables `publish_to_default_branch`; alpha paths never write the default branch.
 - If `release/<package_tag>` already exists but the tag or GitHub Release is incomplete, reruns reuse the matching release-branch commit; a mismatched generated `Package.swift` or `scripts/spm/current_release.json` fails loudly.
 - `Package.swift` should not be hand-edited for releases; the release pipeline regenerates it from `scripts/spm/current_release.json`.
+- `NCNNVulkan` intentionally weak-links `@rpath/libvulkan.dylib` so apps that only load the package do not pay an unconditional MoltenVK runtime dependency at launch. The provider-side release gate verifies that weak link remains present.
+- Consumers that enable Vulkan inference must still provide a Vulkan runtime loader in the final app bundle and must treat runtime availability as a feature capability, not as proof that the SwiftPM package failed to link.
 
 ## Documentation
 

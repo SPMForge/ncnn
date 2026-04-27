@@ -27,6 +27,8 @@ class Variant:
     asset_suffix: str
     module_name: str
     platforms: tuple[Platform, ...]
+    runtime_dependency_model: str = "none"
+    weak_runtime_dependencies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,8 @@ VULKAN_VARIANT = Variant(
         Platform("visionOS", "xros", "VISIONOS", "generic/platform=visionOS", ("arm64",), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["xros"]),
         Platform("visionOS Simulator", "xros-simulator", "SIMULATOR_VISIONOS", "generic/platform=visionOS Simulator", ("arm64", "x86_64"), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["xros"]),
     ),
+    runtime_dependency_model="weak-link",
+    weak_runtime_dependencies=("@rpath/libvulkan.dylib",),
 )
 
 VARIANTS = (CPU_VARIANT, VULKAN_VARIANT)
@@ -192,6 +196,10 @@ def variant_for_target_name(target_name: str) -> Variant:
         return VARIANTS_BY_TARGET[target_name]
     except KeyError as error:
         raise ValueError(f"unsupported variant target name: {target_name}") from error
+
+
+def required_weak_dependencies_for_variant(variant: Variant) -> list[str]:
+    return list(variant.weak_runtime_dependencies)
 
 
 def render_package_platforms() -> list[str]:
@@ -292,6 +300,8 @@ def build_artifact_metadata_payload(release: ReleaseAsset, artifact_path: str) -
         "artifact_path": artifact_path,
         "checksum": release.checksum,
         "platforms": [platform.swiftpm_platform for platform in release.variant.platforms],
+        "runtime_dependency_model": release.variant.runtime_dependency_model,
+        "weak_runtime_dependencies": required_weak_dependencies_for_variant(release.variant),
     }
 
 
@@ -305,6 +315,13 @@ def _require_string_field(payload: dict[str, object], field_name: str, source_pa
 def _require_string_list_field(payload: dict[str, object], field_name: str, source_path: Path) -> list[str]:
     value = payload.get(field_name)
     if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"invalid {field_name} in {source_path}")
+    return value
+
+
+def _require_optional_string_list_field(payload: dict[str, object], field_name: str, source_path: Path) -> list[str]:
+    value = payload.get(field_name)
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise ValueError(f"invalid {field_name} in {source_path}")
     return value
 
@@ -342,6 +359,20 @@ def load_build_artifact_metadata(path: Path) -> BuildArtifactMetadata:
     if actual_platforms != expected_platforms:
         raise ValueError(
             f"invalid platforms in {path}: expected {expected_platforms!r}, found {actual_platforms!r}"
+        )
+
+    actual_runtime_dependency_model = _require_string_field(payload, "runtime_dependency_model", path)
+    if actual_runtime_dependency_model != variant.runtime_dependency_model:
+        raise ValueError(
+            f"invalid runtime_dependency_model in {path}: "
+            f"expected {variant.runtime_dependency_model!r}, found {actual_runtime_dependency_model!r}"
+        )
+    actual_weak_runtime_dependencies = _require_optional_string_list_field(payload, "weak_runtime_dependencies", path)
+    expected_weak_runtime_dependencies = required_weak_dependencies_for_variant(variant)
+    if actual_weak_runtime_dependencies != expected_weak_runtime_dependencies:
+        raise ValueError(
+            f"invalid weak_runtime_dependencies in {path}: "
+            f"expected {expected_weak_runtime_dependencies!r}, found {actual_weak_runtime_dependencies!r}"
         )
 
     return BuildArtifactMetadata(

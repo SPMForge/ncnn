@@ -87,6 +87,8 @@ def _write_combined_metadata(
                 "url": packaging.release_url(owner, repo, release.package_tag, release.variant, release.upstream_tag),
                 "checksum": release.checksum,
                 "platforms": [platform.swiftpm_platform for platform in release.variant.platforms],
+                "runtime_dependency_model": release.variant.runtime_dependency_model,
+                "weak_runtime_dependencies": packaging.required_weak_dependencies_for_variant(release.variant),
             }
             for release in releases
         ],

@@ -257,6 +257,8 @@ class PackageRenderingTests(unittest.TestCase):
         self.assertEqual(payload["module_name"], "ncnn")
         self.assertEqual(payload["asset_name"], "ncnn-20260113-apple.xcframework.zip")
         self.assertEqual(payload["artifact_path"], "/tmp/ncnn-20260113-apple.xcframework.zip")
+        self.assertEqual(payload["runtime_dependency_model"], "none")
+        self.assertEqual(payload["weak_runtime_dependencies"], [])
         self.assertEqual(
             payload["platforms"],
             [
@@ -289,6 +291,24 @@ class PackageRenderingTests(unittest.TestCase):
             metadata_path.write_text(json.dumps(payload))
 
             with self.assertRaisesRegex(ValueError, "asset_name"):
+                packaging.load_build_artifact_metadata(metadata_path)
+
+    def test_load_build_artifact_metadata_rejects_runtime_contract_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            metadata_path = Path(temporary_directory) / "ncnn_vulkan.release.json"
+            payload = packaging.build_artifact_metadata_payload(
+                packaging.ReleaseAsset(
+                    variant=packaging.VULKAN_VARIANT,
+                    upstream_tag="20260113",
+                    package_tag="1.0.20260113-alpha.1",
+                    checksum="vulkan-checksum",
+                ),
+                artifact_path="/tmp/ncnn-20260113-apple-vulkan.xcframework.zip",
+            )
+            payload["weak_runtime_dependencies"] = []
+            metadata_path.write_text(json.dumps(payload))
+
+            with self.assertRaisesRegex(ValueError, "weak_runtime_dependencies"):
                 packaging.load_build_artifact_metadata(metadata_path)
 
     def test_rendered_static_manifest_is_self_contained(self) -> None:
@@ -475,6 +495,64 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
     def _archive_checksum(self, archive_path: Path) -> str:
         return hashlib.sha256(archive_path.read_bytes()).hexdigest()
 
+    def test_validate_package_contract_requires_vulkan_weak_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            cpu_archive_path = self._write_release_archive_fixture(
+                temporary_root / "cpu",
+                packaging.CPU_VARIANT,
+                "20260113",
+            )
+            vulkan_archive_path = self._write_release_archive_fixture(
+                temporary_root / "vulkan",
+                packaging.VULKAN_VARIANT,
+                "20260113",
+            )
+            cpu_metadata_path = temporary_root / "ncnn.release.json"
+            vulkan_metadata_path = temporary_root / "ncnn_vulkan.release.json"
+            cpu_metadata_path.write_text(
+                json.dumps(
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.CPU_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum=self._archive_checksum(cpu_archive_path),
+                        ),
+                        artifact_path=str(cpu_archive_path),
+                    )
+                )
+            )
+            vulkan_metadata_path.write_text(
+                json.dumps(
+                    packaging.build_artifact_metadata_payload(
+                        packaging.ReleaseAsset(
+                            variant=packaging.VULKAN_VARIANT,
+                            upstream_tag="20260113",
+                            package_tag="1.0.20260113-alpha.1",
+                            checksum=self._archive_checksum(vulkan_archive_path),
+                        ),
+                        artifact_path=str(vulkan_archive_path),
+                    )
+                )
+            )
+            release_inputs = validate_package_contract._load_release_inputs(
+                [cpu_metadata_path, vulkan_metadata_path],
+                [cpu_archive_path, vulkan_archive_path],
+            )
+
+            with mock.patch.object(
+                validate_package_contract.validate_mergeable_xcframework,
+                "validate_xcframework",
+                return_value={"issues": []},
+            ) as validate_xcframework:
+                validate_package_contract._validate_release_archives(release_inputs)
+
+            self.assertEqual(validate_xcframework.call_count, 2)
+            cpu_call, vulkan_call = validate_xcframework.call_args_list
+            self.assertEqual(cpu_call.kwargs["require_weak_dependencies"], [])
+            self.assertEqual(vulkan_call.kwargs["require_weak_dependencies"], ["@rpath/libvulkan.dylib"])
+
     def test_validate_package_contract_accepts_fresh_release_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
@@ -521,7 +599,10 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
             cpu_archive_path = temporary_root / "cpu" / packaging.asset_name_for_variant(packaging.CPU_VARIANT, "20260113")
             vulkan_archive_path = temporary_root / "vulkan" / packaging.asset_name_for_variant(packaging.VULKAN_VARIANT, "20260113")
 
-            with mock.patch.object(validate_package_contract, "_validate_manifest") as validate_manifest:
+            with (
+                mock.patch.object(validate_package_contract, "_validate_release_archives", return_value=[{}, {}]) as validate_archives,
+                mock.patch.object(validate_package_contract, "_validate_manifest") as validate_manifest,
+            ):
                 observed: dict[str, object] = {}
 
                 def _capture_consumer_inputs(
@@ -564,7 +645,9 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["release_count"], 2)
+            self.assertEqual(payload["archive_validation_count"], 2)
             self.assertEqual(payload["consumer_validation_count"], 2)
+            validate_archives.assert_called_once()
             validate_manifest.assert_called_once()
             validate_consumers.assert_called_once()
             self.assertEqual(observed["package_name"], "ncnn")
@@ -618,6 +701,7 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
 
             observed: dict[str, str] = {}
             with (
+                mock.patch.object(validate_package_contract, "_validate_release_archives", return_value=[{}, {}]),
                 mock.patch.object(validate_package_contract, "_validate_manifest"),
                 mock.patch.object(validate_package_contract, "_validate_local_package_consumers"),
                 mock.patch.object(validate_package_contract, "_stage_local_release_archives", return_value=temporary_root / "Artifacts"),
@@ -1035,6 +1119,40 @@ class BuildCommandTests(unittest.TestCase):
                     str(temporary_root / "ncnn.xcframework"),
                 ],
                 env={"PATH": "/usr/bin:/bin"},
+            )
+
+    def test_vulkan_xcframework_validation_requires_weak_vulkan_loader(self) -> None:
+        with mock.patch(
+            "scripts.spm.build_apple_xcframework.validate_mergeable_xcframework.validate_xcframework"
+        ) as validate_mock:
+            validate_mock.return_value = {"issues": []}
+
+            build_apple_xcframework._validate_xcframework(
+                Path("/tmp/ncnn_vulkan.xcframework"),
+                packaging.VULKAN_VARIANT,
+            )
+
+            validate_mock.assert_called_once_with(
+                Path("/tmp/ncnn_vulkan.xcframework"),
+                [platform.swiftpm_platform for platform in packaging.VULKAN_VARIANT.platforms],
+                require_weak_dependencies=["@rpath/libvulkan.dylib"],
+            )
+
+    def test_cpu_xcframework_validation_does_not_require_vulkan_loader(self) -> None:
+        with mock.patch(
+            "scripts.spm.build_apple_xcframework.validate_mergeable_xcframework.validate_xcframework"
+        ) as validate_mock:
+            validate_mock.return_value = {"issues": []}
+
+            build_apple_xcframework._validate_xcframework(
+                Path("/tmp/ncnn.xcframework"),
+                packaging.CPU_VARIANT,
+            )
+
+            validate_mock.assert_called_once_with(
+                Path("/tmp/ncnn.xcframework"),
+                [platform.swiftpm_platform for platform in packaging.CPU_VARIANT.platforms],
+                require_weak_dependencies=[],
             )
 
 

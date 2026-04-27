@@ -184,6 +184,9 @@ jobs:
           for platform in ${{ matrix.required_platforms }}; do
             validation_args+=(--require-platform "$platform")
           done
+          if [ "${{ matrix.variant }}" = "ncnn_vulkan" ]; then
+            validation_args+=(--require-weak-dependency @rpath/libvulkan.dylib)
+          fi
           archive_path="$(find "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}" -maxdepth 1 -name '*.xcframework.zip' -print -quit)"
           if [ -z "$archive_path" ]; then
             echo "missing xcframework archive for ${{ matrix.variant }}" >&2
