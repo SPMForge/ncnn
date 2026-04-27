@@ -139,6 +139,7 @@ def select_publication_tag(
     latest_package_tag: str | None,
     next_package_tag: str | None,
     rendered_package_swift: str,
+    rendered_current_release_json: str | None = None,
 ) -> dict[str, object]:
     if release_channel not in {"sync", "alpha", "stable"}:
         raise ValueError(f"unsupported release channel: {release_channel}")
@@ -146,15 +147,38 @@ def select_publication_tag(
     final_package_tag = build_tag
     latest_package_tag = latest_package_tag or None
     next_package_tag = next_package_tag or None
+    contract_matches = True
 
-    if release_channel != "stable" and latest_package_tag is not None:
-        latest_package_swift = _git_show(repo_root, f"refs/tags/{latest_package_tag}", "Package.swift")
-        if latest_package_swift is not None and latest_package_swift == rendered_package_swift:
+    def _latest_package_matches(tag: str) -> bool:
+        latest_package_swift = _git_show(repo_root, f"refs/tags/{tag}", "Package.swift")
+        if latest_package_swift is None:
+            return False
+        if latest_package_swift != rendered_package_swift:
+            return False
+        if rendered_current_release_json is None:
+            return True
+        latest_current_release_json = _git_show(
+            repo_root,
+            f"refs/tags/{tag}",
+            "scripts/spm/current_release.json",
+        )
+        return latest_current_release_json == rendered_current_release_json
+
+    if release_channel == "sync":
+        if latest_package_tag is not None and build_tag == latest_package_tag:
             final_package_tag = latest_package_tag
-        elif next_package_tag is not None:
-            final_package_tag = next_package_tag
-        elif build_tag == latest_package_tag:
-            raise ValueError("next_package_tag is required when the latest alpha Package.swift does not match.")
+            contract_matches = _latest_package_matches(latest_package_tag)
+    elif release_channel == "alpha":
+        if latest_package_tag is not None:
+            contract_matches = _latest_package_matches(latest_package_tag)
+            if contract_matches:
+                final_package_tag = latest_package_tag
+            elif next_package_tag is not None:
+                final_package_tag = next_package_tag
+            elif build_tag == latest_package_tag:
+                raise ValueError("next_package_tag is required when the latest alpha Package.swift does not match.")
+    elif release_channel == "stable":
+        pass
 
     tag_ref = f"refs/tags/{final_package_tag}"
     remote_tag_exists = _ref_exists(repo_root, tag_ref)
@@ -162,6 +186,7 @@ def select_publication_tag(
 
     return {
         "final_package_tag": final_package_tag,
+        "package_contract_matches": contract_matches,
         "remote_tag_exists": remote_tag_exists,
         "remote_tag_commit": remote_tag_commit,
     }
@@ -178,6 +203,7 @@ def _write_github_output(path: Path, payload: dict[str, object]) -> None:
 def _write_publication_github_output(path: Path, payload: dict[str, object]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"final_package_tag={payload['final_package_tag']}\n")
+        handle.write(f"package_contract_matches={str(payload['package_contract_matches']).lower()}\n")
         handle.write(f"remote_tag_exists={str(payload['remote_tag_exists']).lower()}\n")
         handle.write(f"remote_tag_commit={payload['remote_tag_commit']}\n")
 
@@ -205,6 +231,7 @@ def _parse_arguments() -> argparse.Namespace:
     publication_parser.add_argument("--latest-package-tag")
     publication_parser.add_argument("--next-package-tag")
     publication_parser.add_argument("--rendered-package-swift", required=True, type=Path)
+    publication_parser.add_argument("--rendered-current-release-json", type=Path)
     publication_parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
 
@@ -230,6 +257,11 @@ def main() -> int:
                 latest_package_tag=arguments.latest_package_tag,
                 next_package_tag=arguments.next_package_tag,
                 rendered_package_swift=arguments.rendered_package_swift.read_text(encoding="utf-8"),
+                rendered_current_release_json=(
+                    arguments.rendered_current_release_json.read_text(encoding="utf-8")
+                    if arguments.rendered_current_release_json is not None
+                    else None
+                ),
             )
         else:
             raise ValueError(f"unsupported command: {arguments.command}")

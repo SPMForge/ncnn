@@ -207,6 +207,9 @@ jobs:
           for platform in ${{ matrix.required_platforms }}; do
             validation_args+=(--require-platform "$platform")
           done
+          if [ "${{ matrix.variant }}" = "ncnn_vulkan" ]; then
+            validation_args+=(--require-weak-dependency @rpath/libvulkan.dylib)
+          fi
           archive_path="$(find "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}" -maxdepth 1 -name '*.xcframework.zip' -print -quit)"
           if [ -z "$archive_path" ]; then
             echo "missing xcframework archive for ${{ matrix.variant }}" >&2
@@ -274,6 +277,7 @@ jobs:
             --release-channel "${{ inputs.release_channel }}"
             --build-tag "${{ needs.resolve.outputs.build_tag }}"
             --rendered-package-swift "$RUNNER_TEMP/candidate-package.swift"
+            --rendered-current-release-json "$RUNNER_TEMP/candidate-current-release.json"
             --github-output "$GITHUB_OUTPUT"
           )
           if [ -n "${{ needs.resolve.outputs.latest_package_tag }}" ]; then
@@ -302,6 +306,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "${{ inputs.release_channel }}" = "sync" ] && [ "${{ steps.publication_plan.outputs.package_contract_matches }}" = "false" ]; then
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+            echo "metadata_needs_repair=false" >> "$GITHUB_OUTPUT"
+            echo "missing_assets=" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Release decision::skipping sync publish because rendered package contract differs from latest tag"
+            exit 0
+          fi
+
           latest_release_tag=""
           release_view_json="$RUNNER_TEMP/release-view.json"
           inspect_args=(
@@ -361,6 +374,7 @@ jobs:
             --release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip
 
       - name: prepare-release-ref
+        if: steps.release_status.outputs.mode != 'skip'
         id: prepare_release_ref
         run: |
           git config user.name "github-actions[bot]"
@@ -447,6 +461,7 @@ jobs:
           - Release ref model: alpha tags point at release/${{ steps.publication_plan.outputs.final_package_tag }} commits and do not update the default branch
           - Products: NCNN, NCNNVulkan
           - Vulkan caveat: watchOS and watchOS Simulator are intentionally excluded
+          - Vulkan runtime contract: NCNNVulkan weak-links @rpath/libvulkan.dylib; consumers that execute Vulkan inference must provide a compatible runtime loader in the final app bundle
           - Verification: script unit tests, xcframework artifact validation, final package contract validation, local xcframework smoke tests
           EOF
 

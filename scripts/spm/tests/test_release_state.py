@@ -44,6 +44,34 @@ class ReleaseStateTests(unittest.TestCase):
             text=True,
         ).stdout.strip()
 
+    def _commit_package_metadata(
+        self,
+        repo_root: Path,
+        package_contents: str,
+        current_release_contents: str,
+        message: str,
+    ) -> str:
+        package_path = repo_root / "Package.swift"
+        metadata_path = repo_root / "scripts" / "spm" / "current_release.json"
+        metadata_path.parent.mkdir(parents=True)
+        package_path.write_text(package_contents)
+        metadata_path.write_text(current_release_contents)
+        subprocess.run(
+            ["git", "add", "Package.swift", "scripts/spm/current_release.json"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(["git", "commit", "-m", message], cwd=repo_root, check=True, capture_output=True, text=True)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
     def test_required_release_asset_names_cover_all_variants(self) -> None:
         self.assertEqual(
             release_state.required_release_asset_names("20260113"),
@@ -140,8 +168,73 @@ class ReleaseStateTests(unittest.TestCase):
             )
 
             self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.1")
+            self.assertTrue(payload["package_contract_matches"])
             self.assertTrue(payload["remote_tag_exists"])
             self.assertEqual(payload["remote_tag_commit"], commit_sha)
+
+    def test_select_publication_tag_advances_when_current_release_metadata_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            self._commit_package_metadata(
+                repo_root,
+                "// generated manifest\n",
+                '{"runtime_dependency_model":"old"}\n',
+                "release alpha.1",
+            )
+            subprocess.run(
+                ["git", "tag", "1.0.20260113-alpha.1"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            payload = release_state.select_publication_tag(
+                repo_root=repo_root,
+                release_channel="alpha",
+                build_tag="1.0.20260113-alpha.1",
+                latest_package_tag="1.0.20260113-alpha.1",
+                next_package_tag="1.0.20260113-alpha.2",
+                rendered_package_swift="// generated manifest\n",
+                rendered_current_release_json='{"runtime_dependency_model":"new"}\n',
+            )
+
+            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.2")
+            self.assertFalse(payload["remote_tag_exists"])
+            self.assertEqual(payload["remote_tag_commit"], "")
+
+    def test_select_publication_tag_sync_reuses_latest_alpha_when_rendered_contents_differ(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            self._commit_package_metadata(
+                repo_root,
+                "// generated manifest\n",
+                '{"runtime_dependency_model":"new"}\n',
+                "release alpha.1",
+            )
+            subprocess.run(
+                ["git", "tag", "1.0.20260113-alpha.1"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            payload = release_state.select_publication_tag(
+                repo_root=repo_root,
+                release_channel="sync",
+                build_tag="1.0.20260113-alpha.1",
+                latest_package_tag="1.0.20260113-alpha.1",
+                next_package_tag="1.0.20260113-alpha.2",
+                rendered_package_swift="// updated generated manifest\n",
+                rendered_current_release_json='{"runtime_dependency_model":"updated"}\n',
+            )
+
+            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.1")
+            self.assertFalse(payload["package_contract_matches"])
+            self.assertTrue(payload["remote_tag_exists"])
 
     def test_select_publication_tag_advances_to_next_alpha_when_rendered_package_differs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -158,7 +251,7 @@ class ReleaseStateTests(unittest.TestCase):
 
             payload = release_state.select_publication_tag(
                 repo_root=repo_root,
-                release_channel="sync",
+                release_channel="alpha",
                 build_tag="1.0.20260113-alpha.1",
                 latest_package_tag="1.0.20260113-alpha.1",
                 next_package_tag="1.0.20260113-alpha.2",
@@ -210,6 +303,52 @@ class ReleaseStateTests(unittest.TestCase):
             output_body = output_path.read_text()
             self.assertIn("mode=repair", output_body)
             self.assertIn("missing_assets=ncnn-20260113-apple-vulkan.xcframework.zip", output_body)
+
+    def test_publication_script_writes_github_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repo_root = Path(temporary_directory)
+            self._init_git_repo(repo_root)
+            commit_sha = self._commit_package(repo_root, "// generated manifest\n", "release alpha.1")
+            subprocess.run(
+                ["git", "tag", "1.0.20260113-alpha.1", commit_sha],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            output_path = repo_root / "github-output.txt"
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(RELEASE_STATE_SCRIPT),
+                    "select-publication-tag",
+                    "--repo-root",
+                    str(repo_root),
+                    "--release-channel",
+                    "sync",
+                    "--build-tag",
+                    "1.0.20260113-alpha.1",
+                    "--latest-package-tag",
+                    "1.0.20260113-alpha.1",
+                    "--next-package-tag",
+                    "1.0.20260113-alpha.2",
+                    "--rendered-package-swift",
+                    str(repo_root / "Package.swift"),
+                    "--github-output",
+                    str(output_path),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            output_body = output_path.read_text()
+            payload = json.loads(process.stdout)
+            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.1")
+            self.assertTrue(payload["package_contract_matches"])
+            self.assertIn("package_contract_matches=true", output_body)
 
 
 if __name__ == "__main__":
