@@ -204,7 +204,7 @@ class ReleaseStateTests(unittest.TestCase):
             self.assertFalse(payload["remote_tag_exists"])
             self.assertEqual(payload["remote_tag_commit"], "")
 
-    def test_select_publication_tag_sync_reuses_latest_alpha_when_rendered_contents_differ(self) -> None:
+    def test_select_publication_tag_sync_advances_to_next_alpha_when_rendered_contents_differ(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repo_root = Path(temporary_directory)
             self._init_git_repo(repo_root)
@@ -232,9 +232,9 @@ class ReleaseStateTests(unittest.TestCase):
                 rendered_current_release_json='{"runtime_dependency_model":"updated"}\n',
             )
 
-            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.1")
+            self.assertEqual(payload["final_package_tag"], "1.0.20260113-alpha.2")
             self.assertFalse(payload["package_contract_matches"])
-            self.assertTrue(payload["remote_tag_exists"])
+            self.assertFalse(payload["remote_tag_exists"])
 
     def test_select_publication_tag_advances_to_next_alpha_when_rendered_package_differs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -306,7 +306,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ inputs.release_channel }}" = "sync" ] && [ "${{ steps.publication_plan.outputs.package_contract_matches }}" = "false" ]; then
+          if [ "${{ inputs.release_channel }}" = "sync" ] &&
+             [ "${{ steps.publication_plan.outputs.package_contract_matches }}" = "false" ] &&
+             [ "${{ steps.publication_plan.outputs.final_package_tag }}" = "${{ needs.resolve.outputs.latest_package_tag }}" ]; then
             echo "mode=skip" >> "$GITHUB_OUTPUT"
             echo "release_exists=true" >> "$GITHUB_OUTPUT"
             echo "metadata_needs_repair=false" >> "$GITHUB_OUTPUT"

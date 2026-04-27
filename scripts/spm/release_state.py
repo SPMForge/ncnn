@@ -164,18 +164,14 @@ def select_publication_tag(
         )
         return latest_current_release_json == rendered_current_release_json
 
-    if release_channel == "sync":
-        if latest_package_tag is not None and build_tag == latest_package_tag:
-            final_package_tag = latest_package_tag
-            contract_matches = _latest_package_matches(latest_package_tag)
-    elif release_channel == "alpha":
+    if release_channel in {"sync", "alpha"}:
         if latest_package_tag is not None:
             contract_matches = _latest_package_matches(latest_package_tag)
             if contract_matches:
                 final_package_tag = latest_package_tag
             elif next_package_tag is not None:
                 final_package_tag = next_package_tag
-            elif build_tag == latest_package_tag:
+            elif build_tag == latest_package_tag and release_channel == "alpha":
                 raise ValueError("next_package_tag is required when the latest alpha Package.swift does not match.")
     elif release_channel == "stable":
         pass
