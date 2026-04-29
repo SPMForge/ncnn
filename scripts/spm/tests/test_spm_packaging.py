@@ -414,7 +414,10 @@ class PackageRenderingTests(unittest.TestCase):
         )
 
         self.assertIn('library(name: "NCNN", targets: ["ncnn"])', package_contents)
-        self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
+        self.assertIn(
+            'library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime_support"])',
+            package_contents,
+        )
         self.assertIn(
             f'.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "{packaging.MOLTENVK_PACKAGE.exact_version}")',
             package_contents,
@@ -437,11 +440,11 @@ class PackageRenderingTests(unittest.TestCase):
         )
         self.assertIn(
             '.target(\n'
-            '            name: "ncnn_vulkan_runtime",\n'
+            '            name: "ncnn_vulkan_runtime_support",\n'
             '            dependencies: [\n'
             '                .product(name: "MoltenVK", package: "MoltenVK"),\n'
             '            ],\n'
-            '            path: "Sources/ncnn_vulkan_runtime"\n'
+            '            path: "Sources/ncnn_vulkan_runtime_support"\n'
             "        )",
             package_contents,
         )
@@ -502,7 +505,10 @@ class PackageRenderingTests(unittest.TestCase):
             "        )",
             package_contents,
         )
-        self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
+        self.assertIn(
+            'library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime_support"])',
+            package_contents,
+        )
         self.assertIn(
             f'.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "{packaging.MOLTENVK_PACKAGE.exact_version}")',
             package_contents,
@@ -653,10 +659,10 @@ import PackageDescription
 let package = Package(
     name: "RuntimeSupportProbe",
     products: [
-        .library(name: "RuntimeSupportProbe", targets: ["ncnn_vulkan_runtime"]),
+        .library(name: "RuntimeSupportProbe", targets: ["ncnn_vulkan_runtime_support"]),
     ],
     targets: [
-        .target(name: "ncnn_vulkan_runtime", path: "Sources/ncnn_vulkan_runtime"),
+        .target(name: "ncnn_vulkan_runtime_support", path: "Sources/ncnn_vulkan_runtime_support"),
     ]
 )
 """
@@ -671,7 +677,13 @@ let package = Package(
 
             self.assertEqual(process.returncode, 0, msg=process.stderr)
             self.assertTrue(
-                (package_root / "Sources" / "ncnn_vulkan_runtime" / "include" / "ncnn_vulkan_runtime.h").is_file()
+                (
+                    package_root
+                    / "Sources"
+                    / "ncnn_vulkan_runtime_support"
+                    / "include"
+                    / "ncnn_vulkan_runtime_support.h"
+                ).is_file()
             )
 
 

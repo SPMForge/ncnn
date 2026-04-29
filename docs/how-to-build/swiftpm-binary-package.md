@@ -68,6 +68,8 @@ The package does not publish standalone `openmp` or `glslang` binary targets.
 
 `NCNNVulkan` is a dedicated Vulkan product, so Vulkan is a required runtime closure. The package strong-links `@rpath/MoltenVK.framework/MoltenVK` and declares the `SPMForge/MoltenVK` package dependency that supplies the provider framework. The release pipeline must not ship `libvulkan.dylib` or `libvulkan.1.dylib` aliases as a substitute for that framework dependency.
 
+`ncnn_vulkan_runtime_support` is an internal SwiftPM support target, not a published runtime binary. It exists because SwiftPM binary targets cannot declare package-product dependencies directly; the public `NCNNVulkan` product includes both the `ncnn_vulkan` binary target and this support target so SwiftPM resolves and embeds the `MoltenVK` product for consumers.
+
 Provider-side rules:
 
 - `ncnn_vulkan.framework/ncnn_vulkan` must strong-link `@rpath/MoltenVK.framework/MoltenVK`.
@@ -77,6 +79,7 @@ Provider-side rules:
 Consumer-side rules:
 
 - Consumers get the MoltenVK framework through SwiftPM package resolution; application targets must embed the SwiftPM-provided runtime framework normally.
+- Consumers should depend on `NCNNVulkan`; they should not import or link the internal `ncnn_vulkan_runtime_support` target directly.
 - A missing MoltenVK framework is a packaging or embedding failure, not an optional feature result.
 - Smoke tests should distinguish "MoltenVK framework not loadable" from "no compatible GPU" and from malformed-model failures. A broad `GPUUnavailable` skip is not sufficient release evidence.
 

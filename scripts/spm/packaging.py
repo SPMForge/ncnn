@@ -125,8 +125,8 @@ MOLTENVK_PRODUCT = SwiftPackageProductDependency(
     package_name=MOLTENVK_DEPENDENCY_CONFIG["package_name"],
 )
 MOLTENVK_RUNTIME_SUPPORT_TARGET = RuntimeSupportTarget(
-    target_name="ncnn_vulkan_runtime",
-    path="Sources/ncnn_vulkan_runtime",
+    target_name="ncnn_vulkan_runtime_support",
+    path="Sources/ncnn_vulkan_runtime_support",
     product_dependencies=(MOLTENVK_PRODUCT,),
 )
 MOLTENVK_ARTIFACT_URL = (
