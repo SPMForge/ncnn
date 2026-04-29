@@ -285,7 +285,10 @@ def _parse_otool_dependencies(output: str) -> dict[str, dict[str, dict[str, bool
 def _dependency_issues(
     platform: str,
     dependencies_by_arch: dict[str, dict[str, dict[str, bool]]],
+    require_dependencies: list[str],
+    require_strong_dependencies: list[str],
     require_weak_dependencies: list[str],
+    forbid_dependencies: list[str],
     expected_architectures: list[str],
 ) -> list[str]:
     issues: list[str] = []
@@ -301,6 +304,35 @@ def _dependency_issues(
         }
     else:
         dependencies_to_check = dependencies_by_arch
+
+    strength_checked_dependencies = set(require_strong_dependencies) | set(require_weak_dependencies)
+    for dependency_path in require_dependencies:
+        if dependency_path in strength_checked_dependencies:
+            continue
+        missing_architectures = [
+            architecture
+            for architecture, dependencies in dependencies_to_check.items()
+            if dependency_path not in dependencies
+        ]
+        if missing_architectures:
+            issues.append(f"{platform}: missing required dependency {dependency_path}")
+
+    for dependency_path in require_strong_dependencies:
+        missing_architectures = [
+            architecture
+            for architecture, dependencies in dependencies_to_check.items()
+            if dependency_path not in dependencies
+        ]
+        if missing_architectures:
+            issues.append(f"{platform}: missing required dependency {dependency_path}")
+            continue
+        weak_architectures = [
+            architecture
+            for architecture, dependencies in dependencies_to_check.items()
+            if dependencies[dependency_path].get("weak", False)
+        ]
+        if weak_architectures:
+            issues.append(f"{platform}: required dependency {dependency_path} must be strong-linked")
 
     for dependency_path in require_weak_dependencies:
         missing_architectures = [
@@ -318,15 +350,30 @@ def _dependency_issues(
         ]
         if strong_architectures:
             issues.append(f"{platform}: required dependency {dependency_path} must be weak-linked")
+
+    for dependency_path in forbid_dependencies:
+        present_architectures = [
+            architecture
+            for architecture, dependencies in dependencies_to_check.items()
+            if dependency_path in dependencies
+        ]
+        if present_architectures:
+            issues.append(f"{platform}: forbidden dependency {dependency_path} is linked")
     return issues
 
 
 def inspect_entry(
     xcframework_path: Path,
     entry: dict[str, object],
+    require_dependencies: list[str] | None = None,
+    require_strong_dependencies: list[str] | None = None,
     require_weak_dependencies: list[str] | None = None,
+    forbid_dependencies: list[str] | None = None,
 ) -> dict[str, object]:
+    require_dependencies = require_dependencies or []
+    require_strong_dependencies = require_strong_dependencies or []
     require_weak_dependencies = require_weak_dependencies or []
+    forbid_dependencies = forbid_dependencies or []
     platform = platform_key(entry)
     library_identifier = entry.get("LibraryIdentifier")
     binary_path = None
@@ -370,7 +417,7 @@ def inspect_entry(
                     error_output = "\n".join(part for part in [error.stdout, error.stderr] if part).strip()
                     result["otool_error"] = error_output if error_output else str(error)
 
-        if require_weak_dependencies:
+        if require_dependencies or require_strong_dependencies or require_weak_dependencies or forbid_dependencies:
             try:
                 otool_load_output = command_output(["xcrun", "otool", "-L", str(binary_path)])
                 dependencies_by_arch = _parse_otool_dependencies(otool_load_output)
@@ -378,7 +425,10 @@ def inspect_entry(
                 result["dependency_issues"] = _dependency_issues(
                     platform,
                     dependencies_by_arch,
+                    require_dependencies,
+                    require_strong_dependencies,
                     require_weak_dependencies,
+                    forbid_dependencies,
                     [str(architecture) for architecture in result["architectures"]],
                 )
             except subprocess.CalledProcessError as error:
@@ -390,9 +440,15 @@ def inspect_entry(
 
 def inspect_xcframework(
     xcframework_path: Path,
+    require_dependencies: list[str] | None = None,
+    require_strong_dependencies: list[str] | None = None,
     require_weak_dependencies: list[str] | None = None,
+    forbid_dependencies: list[str] | None = None,
 ) -> dict[str, object]:
+    require_dependencies = require_dependencies or []
+    require_strong_dependencies = require_strong_dependencies or []
     require_weak_dependencies = require_weak_dependencies or []
+    forbid_dependencies = forbid_dependencies or []
     info_path = xcframework_path / "Info.plist"
     if not info_path.exists():
         return {
@@ -411,7 +467,14 @@ def inspect_xcframework(
         }
 
     entries = [
-        inspect_entry(xcframework_path, entry, require_weak_dependencies=require_weak_dependencies)
+        inspect_entry(
+            xcframework_path,
+            entry,
+            require_dependencies=require_dependencies,
+            require_strong_dependencies=require_strong_dependencies,
+            require_weak_dependencies=require_weak_dependencies,
+            forbid_dependencies=forbid_dependencies,
+        )
         for entry in available
         if isinstance(entry, dict)
     ]
@@ -472,21 +535,33 @@ def inspect_xcframework(
 def validate_xcframework(
     xcframework_path: Path,
     required_platforms: list[str],
+    require_dependencies: list[str] | None = None,
+    require_strong_dependencies: list[str] | None = None,
     require_weak_dependencies: list[str] | None = None,
+    forbid_dependencies: list[str] | None = None,
 ) -> dict[str, object]:
     return validate_xcframework_with_options(
         xcframework_path,
         required_platforms,
+        require_dependencies=require_dependencies,
+        require_strong_dependencies=require_strong_dependencies,
         require_weak_dependencies=require_weak_dependencies,
+        forbid_dependencies=forbid_dependencies,
     )
 
 
 def validate_xcframework_with_options(
     xcframework_path: Path,
     required_platforms: list[str],
+    require_dependencies: list[str] | None = None,
+    require_strong_dependencies: list[str] | None = None,
     require_weak_dependencies: list[str] | None = None,
+    forbid_dependencies: list[str] | None = None,
 ) -> dict[str, object]:
+    require_dependencies = require_dependencies or []
+    require_strong_dependencies = require_strong_dependencies or []
     require_weak_dependencies = require_weak_dependencies or []
+    forbid_dependencies = forbid_dependencies or []
     if xcframework_path.is_file():
         root_xcframeworks = _archive_root_xcframework_names(xcframework_path)
         issues: list[str] = []
@@ -502,7 +577,10 @@ def validate_xcframework_with_options(
             extracted_xcframework = temporary_root / root_xcframeworks[0]
             result = inspect_xcframework(
                 extracted_xcframework,
+                require_dependencies=require_dependencies,
+                require_strong_dependencies=require_strong_dependencies,
                 require_weak_dependencies=require_weak_dependencies,
+                forbid_dependencies=forbid_dependencies,
             )
         available_platforms = sorted(str(entry["platform"]) for entry in result["entries"])
         missing_platforms = sorted(set(required_platforms) - set(available_platforms))
@@ -511,7 +589,13 @@ def validate_xcframework_with_options(
         result["xcframework"] = str(xcframework_path)
         return result
 
-    result = inspect_xcframework(xcframework_path, require_weak_dependencies=require_weak_dependencies)
+    result = inspect_xcframework(
+        xcframework_path,
+        require_dependencies=require_dependencies,
+        require_strong_dependencies=require_strong_dependencies,
+        require_weak_dependencies=require_weak_dependencies,
+        forbid_dependencies=forbid_dependencies,
+    )
     available_platforms = sorted(str(entry["platform"]) for entry in result["entries"])
     missing_platforms = sorted(set(required_platforms) - set(available_platforms))
     if missing_platforms:
@@ -529,10 +613,28 @@ def main() -> int:
         help="Require an XCFramework platform key such as ios, ios-simulator, ios-maccatalyst, macos, tvos, watchos, or xros.",
     )
     parser.add_argument(
+        "--require-dependency",
+        action="append",
+        default=[],
+        help="Require each slice binary to link the given install name with any link strength.",
+    )
+    parser.add_argument(
+        "--require-strong-dependency",
+        action="append",
+        default=[],
+        help="Require each slice binary to strong-link the given install name, such as @rpath/MoltenVK.framework/MoltenVK.",
+    )
+    parser.add_argument(
         "--require-weak-dependency",
         action="append",
         default=[],
-        help="Require each slice binary to weak-link the given install name, such as @rpath/libvulkan.dylib.",
+        help="Require each slice binary to weak-link the given install name.",
+    )
+    parser.add_argument(
+        "--forbid-dependency",
+        action="append",
+        default=[],
+        help="Reject each slice binary that links the given retired or forbidden install name.",
     )
     arguments = parser.parse_args()
 
@@ -540,7 +642,10 @@ def main() -> int:
         validate_xcframework_with_options(
             path,
             arguments.require_platform,
+            require_dependencies=arguments.require_dependency,
+            require_strong_dependencies=arguments.require_strong_dependency,
             require_weak_dependencies=arguments.require_weak_dependency,
+            forbid_dependencies=arguments.forbid_dependency,
         )
         for path in discover_xcframeworks(arguments.paths)
     ]

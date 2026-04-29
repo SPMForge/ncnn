@@ -129,8 +129,10 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         "publish core must validate package contract against fresh release archives",
     )
     require(
-        "--require-weak-dependency @rpath/libvulkan.dylib" in core_workflow,
-        "publish core must validate the NCNNVulkan weak Vulkan loader dependency",
+        "--require-strong-dependency @rpath/MoltenVK.framework/MoltenVK" in core_workflow
+        and "--forbid-dependency @rpath/libvulkan.dylib" in core_workflow
+        and "--forbid-dependency @rpath/libvulkan.1.dylib" in core_workflow,
+        "publish core must validate the NCNNVulkan strong MoltenVK dependency and reject retired Vulkan loaders",
     )
     require("hashFiles(" in core_workflow, "publish core must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in core_workflow, "publish core must not hardcode DEVELOPER_DIR")
@@ -163,20 +165,23 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         "validation workflow must validate package contract against fresh release archives",
     )
     require(
-        "--require-weak-dependency @rpath/libvulkan.dylib" in validate_workflow,
-        "validation workflow must validate the NCNNVulkan weak Vulkan loader dependency",
+        "--require-strong-dependency @rpath/MoltenVK.framework/MoltenVK" in validate_workflow
+        and "--forbid-dependency @rpath/libvulkan.dylib" in validate_workflow
+        and "--forbid-dependency @rpath/libvulkan.1.dylib" in validate_workflow,
+        "validation workflow must validate the NCNNVulkan strong MoltenVK dependency and reject retired Vulkan loaders",
     )
     require("hashFiles(" in validate_workflow, "validation workflow must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in validate_workflow, "validation workflow must not hardcode DEVELOPER_DIR")
     require(
         "runtime_dependency_model" in packaging_script
-        and "weak_runtime_dependencies" in packaging_script,
-        "packaging contract must record runtime dependency model and weak runtime dependencies",
+        and "strong_runtime_dependencies" in packaging_script
+        and "forbidden_runtime_dependencies" in packaging_script,
+        "packaging contract must record runtime dependency model, strong runtime dependencies, and forbidden runtime dependencies",
     )
     require(
         "Runtime contract record" in release_document
-        and "model: `weak-link`" in release_document
-        and "install name: `@rpath/libvulkan.dylib`" in release_document,
+        and "model: `strong-link`" in release_document
+        and "install name: `@rpath/MoltenVK.framework/MoltenVK`" in release_document,
         "release documentation must record the NCNNVulkan runtime dependency contract",
     )
     require('path: "Artifacts/' not in package_swift, "committed Package.swift must not use repo-local artifact paths")

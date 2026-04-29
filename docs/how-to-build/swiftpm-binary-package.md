@@ -13,6 +13,7 @@ This document describes the SwiftPM binary release flow maintained on the `main`
 - Platform metadata file: `scripts/spm/platforms.json`
 - Source acquisition contract: `scripts/spm/source_acquisition.json`
 - Manifest model: release automation regenerates root `Package.swift` from `scripts/spm/current_release.json`; published consumers read a static manifest instead of repo-local sidecar JSON files
+- Checked-in compatibility note: the default-branch `Package.swift` and `scripts/spm/current_release.json` currently describe the already-published `1.0.20260113-alpha.5` artifacts. That historical Vulkan archive uses the retired weak-loader contract and must stay recorded that way until a new archive, tag, and checksum are published by the current release pipeline.
 
 Wrapper repo state:
 
@@ -26,18 +27,25 @@ Wrapper repo state:
   - Binary target: `ncnn`
   - Module name: `ncnn`
   - Coverage: iOS, iOS Simulator, macOS, Mac Catalyst, tvOS, tvOS Simulator, watchOS, watchOS Simulator, visionOS, visionOS Simulator
-- `NCNNVulkan`
+- `NCNNVulkan` for new release builds
   - Binary target: `ncnn_vulkan`
   - Module name: `ncnn_vulkan`
-  - Coverage: iOS, iOS Simulator, macOS, Mac Catalyst, tvOS, tvOS Simulator, visionOS, visionOS Simulator
-  - Caveat: watchOS and watchOS Simulator are intentionally excluded
-  - Runtime contract: the framework binary weak-links `@rpath/libvulkan.dylib`; the package does not strong-link `MoltenVK.framework` and does not publish a standalone Vulkan loader dylib
+  - Coverage: iOS, iOS Simulator, macOS, tvOS, tvOS Simulator, visionOS, visionOS Simulator
+  - Caveat: Mac Catalyst, watchOS, and watchOS Simulator are intentionally excluded because the SwiftPM-supplied MoltenVK runtime package does not provide those slices
+  - Runtime contract: the framework binary strong-links `@rpath/MoltenVK.framework/MoltenVK`; the SwiftPM package graph supplies `MoltenVK` through `SPMForge/MoltenVK`
 
 Both variants are built with:
 
 - `NCNN_SHARED_LIB=ON`
 - `NCNN_OPENMP=ON`
 - `NCNN_SIMPLEOMP=ON`
+
+The Vulkan variant additionally uses:
+
+- `NCNN_VULKAN=ON`
+- `NCNN_SIMPLEVK=OFF`
+- `Vulkan_LIBRARY=<MoltenVK.framework binary>`
+- `Vulkan_INCLUDE_DIR=<MoltenVK.framework Headers>`
 
 macOS packaging detail:
 
@@ -52,29 +60,29 @@ The package does not publish standalone `openmp` or `glslang` binary targets.
 
 ## Vulkan Runtime Contract
 
-`NCNNVulkan` intentionally keeps Vulkan as a weak runtime dependency. This keeps apps that import the package from paying an unconditional MoltenVK load cost during launch, while still allowing hosts that enable Vulkan inference to provide a compatible Vulkan runtime.
+`NCNNVulkan` is a dedicated Vulkan product, so Vulkan is a required runtime closure. The package strong-links `@rpath/MoltenVK.framework/MoltenVK` and declares the `SPMForge/MoltenVK` package dependency that supplies the provider framework. The release pipeline must not ship `libvulkan.dylib` or `libvulkan.1.dylib` aliases as a substitute for that framework dependency.
 
 Provider-side rules:
 
-- `ncnn_vulkan.framework/ncnn_vulkan` must weak-link `@rpath/libvulkan.dylib`.
-- Release validation must fail if `@rpath/libvulkan.dylib` is missing from the binary load commands or becomes a strong dependency.
-- The package must not rely on application code to `dlopen()` MoltenVK as a hidden workaround.
+- `ncnn_vulkan.framework/ncnn_vulkan` must strong-link `@rpath/MoltenVK.framework/MoltenVK`.
+- Release validation must fail if the MoltenVK install name is missing, weak-linked, or replaced by retired `libvulkan` loader install names.
+- The package must not rely on application code to `dlopen()` MoltenVK or create loader aliases as a hidden workaround.
 
 Consumer-side rules:
 
-- Apps that execute Vulkan inference must embed a compatible Vulkan runtime loader that satisfies `@rpath/libvulkan.dylib`.
-- A missing runtime loader is a runtime capability failure, not a Swift API integration failure.
-- Smoke tests should distinguish "Vulkan runtime unavailable" from "no compatible GPU" and from malformed-model failures. A broad `GPUUnavailable` skip is not sufficient release evidence.
+- Consumers get the MoltenVK framework through SwiftPM package resolution; application targets must embed the SwiftPM-provided runtime framework normally.
+- A missing MoltenVK framework is a packaging or embedding failure, not an optional feature result.
+- Smoke tests should distinguish "MoltenVK framework not loadable" from "no compatible GPU" and from malformed-model failures. A broad `GPUUnavailable` skip is not sufficient release evidence.
 
 Runtime contract record:
 
-- model: `weak-link`
-- install name: `@rpath/libvulkan.dylib`
-- runtime supplier: consumer app or a higher-level package that embeds a compatible Vulkan loader, such as MoltenVK
-- expected loader location: any final app bundle location reachable through the host's runtime search path for `@rpath/libvulkan.dylib`
-- feature failure mode: Vulkan inference should report runtime unavailable when the loader is absent or incompatible; import, link, and non-Vulkan package loading should still succeed
-- provider validation command: `python3 scripts/spm/validate_mergeable_xcframework.py <ncnn-vulkan-zip> --require-weak-dependency @rpath/libvulkan.dylib`
-- closure validation host: downstream packages that enable Vulkan inference, such as SnowNCNN, must prove the loader bundle layout before exercising GPU feature paths
+- model: `strong-link`
+- install name: `@rpath/MoltenVK.framework/MoltenVK`
+- runtime supplier: SwiftPM package dependency `SPMForge/MoltenVK`, product `MoltenVK`
+- expected framework location: final app bundle framework location reachable through normal SwiftPM/Xcode embedding and `@rpath`
+- feature failure mode: launch/link should fail when MoltenVK is absent; Vulkan feature execution may still report no compatible GPU on hosts without a usable Metal/Vulkan device
+- provider validation command: `python3 scripts/spm/validate_mergeable_xcframework.py <ncnn-vulkan-zip> --require-strong-dependency @rpath/MoltenVK.framework/MoltenVK --forbid-dependency @rpath/libvulkan.dylib --forbid-dependency @rpath/libvulkan.1.dylib`
+- closure validation host: the package-contract gate must prove the SwiftPM consumer graph resolves `NCNNVulkan` with the `MoltenVK` product before exercising the Vulkan feature path
 
 ## Release Automation
 
@@ -153,11 +161,15 @@ python3 scripts/spm/build_apple_xcframework.py \
 Build the Vulkan package locally:
 
 ```bash
+python3 scripts/spm/prepare_moltenvk_dependency.py \
+  --output-dir /tmp/ncnn-spm/moltenvk
+
 python3 scripts/spm/build_apple_xcframework.py \
   --variant ncnn_vulkan \
   --upstream-tag 20260113 \
   --source-root /path/to/upstream-source-tree \
-  --output-dir /tmp/ncnn-spm
+  --output-dir /tmp/ncnn-spm \
+  --moltenvk-xcframework /tmp/ncnn-spm/moltenvk/extracted/MoltenVK.xcframework
 ```
 
 Merge release metadata after building both variants:
@@ -207,7 +219,7 @@ python3 scripts/spm/validate_mergeable_xcframework.py \
   --require-platform xros-simulator
 ```
 
-Validate the Vulkan XCFramework weak runtime dependency before publishing:
+Validate the Vulkan XCFramework strong MoltenVK runtime dependency before publishing:
 
 ```bash
 python3 scripts/spm/validate_mergeable_xcframework.py \
@@ -215,15 +227,16 @@ python3 scripts/spm/validate_mergeable_xcframework.py \
   --require-platform ios \
   --require-platform ios-simulator \
   --require-platform macos \
-  --require-platform ios-maccatalyst \
   --require-platform tvos \
   --require-platform tvos-simulator \
   --require-platform xros \
   --require-platform xros-simulator \
-  --require-weak-dependency @rpath/libvulkan.dylib
+  --require-strong-dependency @rpath/MoltenVK.framework/MoltenVK \
+  --forbid-dependency @rpath/libvulkan.dylib \
+  --forbid-dependency @rpath/libvulkan.1.dylib
 ```
 
-Run the Apple platform preflight used by CI:
+Run the Apple platform preflight used by CI. Use the CPU matrix for `ncnn`:
 
 ```bash
 preflight_args=(
@@ -240,6 +253,23 @@ preflight_args=(
 )
 python3 scripts/spm/preflight_apple_platforms.py \
   --variant ncnn \
+  "${preflight_args[@]}"
+```
+
+Use the reduced Vulkan matrix for `ncnn_vulkan`:
+
+```bash
+preflight_args=(
+  --required-platform ios
+  --required-platform ios-simulator
+  --required-platform macos
+  --required-platform tvos
+  --required-platform tvos-simulator
+  --required-platform xros
+  --required-platform xros-simulator
+)
+python3 scripts/spm/preflight_apple_platforms.py \
+  --variant ncnn_vulkan \
   "${preflight_args[@]}"
 ```
 
@@ -285,7 +315,7 @@ What to verify in CI logs:
 - Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
 - XCFramework validation rejects a flattened macOS framework slice; the macOS bundle must retain its versioned framework layout.
 - XCFramework validation also rejects exported framework headers that still use quoted or non-framework same-header imports.
-- Vulkan XCFramework validation rejects artifacts that drop `@rpath/libvulkan.dylib` or accidentally strong-link it.
+- Vulkan XCFramework validation rejects artifacts that drop the strong `@rpath/MoltenVK.framework/MoltenVK` dependency, weak-link it, or retain retired `libvulkan` loader install names.
 
 ## Consumer Notes
 
@@ -293,7 +323,7 @@ What to verify in CI logs:
 - The repo-local smoke test validates Debug consumption with `swift build` and Release consumption with `xcodebuild ... MERGED_BINARY_TYPE=automatic`, using framework-style public header imports.
 - The final package-contract gate repeats consumer validation from the aggregated package root, not only from per-variant standalone XCFrameworks.
 - `NCNNVulkan` is a distinct binary target from `NCNN`; do not assume that every Apple platform available in `NCNN` is also available in `NCNNVulkan`.
-- `NCNNVulkan` weak-links the Vulkan loader by design. Host packages such as SnowNCNN should expose explicit runtime availability checks before real inference and should not hide loader setup in app-side `dlopen()` code.
+- `NCNNVulkan` strong-links the SwiftPM-supplied `MoltenVK.framework`; host packages such as SnowNCNN should not hide loader setup in app-side `dlopen()` code or create `libvulkan` aliases.
 - `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
 - Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.
 - Automated SwiftPM package tags are always GitHub prereleases in the alpha channel.

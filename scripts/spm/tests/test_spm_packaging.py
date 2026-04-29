@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import io
 import json
+import plistlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -124,14 +125,13 @@ class PlatformMatrixTests(unittest.TestCase):
             ],
         )
 
-    def test_vulkan_variant_excludes_watchos(self) -> None:
+    def test_vulkan_variant_excludes_unsupported_provider_platforms(self) -> None:
         self.assertEqual(
             [platform.swiftpm_platform for platform in packaging.VULKAN_VARIANT.platforms],
             [
                 "ios",
                 "ios-simulator",
                 "macos",
-                "ios-maccatalyst",
                 "tvos",
                 "tvos-simulator",
                 "xros",
@@ -163,7 +163,8 @@ class PackageRenderingTests(unittest.TestCase):
         )
 
         self.assertIn('library(name: "NCNN", targets: ["ncnn"])', package_contents)
-        self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan"])', package_contents)
+        self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
+        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.5")', package_contents)
         self.assertIn(
             '.binaryTarget(\n'
             '            name: "ncnn",\n'
@@ -177,6 +178,16 @@ class PackageRenderingTests(unittest.TestCase):
             '            name: "ncnn_vulkan",\n'
             '            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.1/ncnn-20260113-apple-vulkan.xcframework.zip",\n'
             '            checksum: "vulkan-checksum"\n'
+            "        )",
+            package_contents,
+        )
+        self.assertIn(
+            '.target(\n'
+            '            name: "ncnn_vulkan_runtime",\n'
+            '            dependencies: [\n'
+            '                .product(name: "MoltenVK", package: "MoltenVK"),\n'
+            '            ],\n'
+            '            path: "Sources/ncnn_vulkan_runtime"\n'
             "        )",
             package_contents,
         )
@@ -237,6 +248,8 @@ class PackageRenderingTests(unittest.TestCase):
             "        )",
             package_contents,
         )
+        self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
+        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.5")', package_contents)
 
     def test_build_artifact_metadata_payload_uses_schema_and_canonical_variant_fields(self) -> None:
         release = packaging.ReleaseAsset(
@@ -258,7 +271,11 @@ class PackageRenderingTests(unittest.TestCase):
         self.assertEqual(payload["asset_name"], "ncnn-20260113-apple.xcframework.zip")
         self.assertEqual(payload["artifact_path"], "/tmp/ncnn-20260113-apple.xcframework.zip")
         self.assertEqual(payload["runtime_dependency_model"], "none")
+        self.assertEqual(payload["runtime_dependency_supplier"], "none")
+        self.assertEqual(payload["runtime_dependencies"], [])
+        self.assertEqual(payload["strong_runtime_dependencies"], [])
         self.assertEqual(payload["weak_runtime_dependencies"], [])
+        self.assertEqual(payload["forbidden_runtime_dependencies"], [])
         self.assertEqual(
             payload["platforms"],
             [
@@ -305,10 +322,10 @@ class PackageRenderingTests(unittest.TestCase):
                 ),
                 artifact_path="/tmp/ncnn-20260113-apple-vulkan.xcframework.zip",
             )
-            payload["weak_runtime_dependencies"] = []
+            payload["strong_runtime_dependencies"] = []
             metadata_path.write_text(json.dumps(payload))
 
-            with self.assertRaisesRegex(ValueError, "weak_runtime_dependencies"):
+            with self.assertRaisesRegex(ValueError, "strong_runtime_dependencies"):
                 packaging.load_build_artifact_metadata(metadata_path)
 
     def test_rendered_static_manifest_is_self_contained(self) -> None:
@@ -336,6 +353,17 @@ class PackageRenderingTests(unittest.TestCase):
                     ],
                 )
             )
+            packaging.write_runtime_support_sources(
+                package_root,
+                [
+                    packaging.ReleaseAsset(
+                        variant=packaging.VULKAN_VARIANT,
+                        upstream_tag="20260113",
+                        package_tag="1.0.20260113-alpha.1",
+                        checksum="vulkan-checksum",
+                    )
+                ],
+            )
 
             process = subprocess.run(
                 ["swift", "package", "dump-package"],
@@ -346,17 +374,55 @@ class PackageRenderingTests(unittest.TestCase):
 
             self.assertEqual(process.returncode, 0, msg=process.stderr)
 
+    def test_runtime_support_sources_are_buildable_as_swiftpm_c_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            package_root = Path(temporary_directory)
+            packaging.write_runtime_support_sources(
+                package_root,
+                [
+                    packaging.ReleaseAsset(
+                        variant=packaging.VULKAN_VARIANT,
+                        upstream_tag="20260113",
+                        package_tag="1.0.20260113-alpha.1",
+                        checksum="vulkan-checksum",
+                    )
+                ],
+            )
+            (package_root / "Package.swift").write_text(
+                """// swift-tools-version: 5.9
+
+import PackageDescription
+
+let package = Package(
+    name: "RuntimeSupportProbe",
+    products: [
+        .library(name: "RuntimeSupportProbe", targets: ["ncnn_vulkan_runtime"]),
+    ],
+    targets: [
+        .target(name: "ncnn_vulkan_runtime", path: "Sources/ncnn_vulkan_runtime"),
+    ]
+)
+"""
+            )
+
+            process = subprocess.run(
+                ["swift", "build"],
+                cwd=package_root,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(process.returncode, 0, msg=process.stderr)
+            self.assertTrue(
+                (package_root / "Sources" / "ncnn_vulkan_runtime" / "include" / "ncnn_vulkan_runtime.h").is_file()
+            )
+
 
 class RootManifestTests(unittest.TestCase):
     def test_root_manifest_matches_current_release_metadata(self) -> None:
         payload = json.loads(CURRENT_RELEASE_METADATA_PATH.read_text())
         releases = [
-            packaging.ReleaseAsset(
-                variant=packaging.variant_for_target_name(release["target_name"]),
-                upstream_tag=release["upstream_tag"],
-                package_tag=release["package_tag"],
-                checksum=release["checksum"],
-            )
+            packaging.release_asset_from_current_release_record(release)
             for release in payload["releases"]
         ]
 
@@ -371,6 +437,7 @@ class RootManifestTests(unittest.TestCase):
 
     def _write_manifest_fixture(self, package_root: Path) -> None:
         shutil.copy2(PACKAGE_SWIFT_PATH, package_root / "Package.swift")
+        shutil.copytree(REPO_ROOT / "Sources", package_root / "Sources")
 
     def _dump_package(self, package_root: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -495,7 +562,7 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
     def _archive_checksum(self, archive_path: Path) -> str:
         return hashlib.sha256(archive_path.read_bytes()).hexdigest()
 
-    def test_validate_package_contract_requires_vulkan_weak_loader(self) -> None:
+    def test_validate_package_contract_requires_vulkan_strong_moltenvk_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             cpu_archive_path = self._write_release_archive_fixture(
@@ -550,8 +617,17 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
 
             self.assertEqual(validate_xcframework.call_count, 2)
             cpu_call, vulkan_call = validate_xcframework.call_args_list
+            self.assertEqual(cpu_call.kwargs["require_dependencies"], [])
+            self.assertEqual(cpu_call.kwargs["require_strong_dependencies"], [])
             self.assertEqual(cpu_call.kwargs["require_weak_dependencies"], [])
-            self.assertEqual(vulkan_call.kwargs["require_weak_dependencies"], ["@rpath/libvulkan.dylib"])
+            self.assertEqual(cpu_call.kwargs["forbid_dependencies"], [])
+            self.assertEqual(vulkan_call.kwargs["require_dependencies"], ["@rpath/MoltenVK.framework/MoltenVK"])
+            self.assertEqual(vulkan_call.kwargs["require_strong_dependencies"], ["@rpath/MoltenVK.framework/MoltenVK"])
+            self.assertEqual(vulkan_call.kwargs["require_weak_dependencies"], [])
+            self.assertEqual(
+                vulkan_call.kwargs["forbid_dependencies"],
+                ["@rpath/libvulkan.dylib", "@rpath/libvulkan.1.dylib"],
+            )
 
     def test_validate_package_contract_accepts_fresh_release_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -654,6 +730,7 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
             self.assertEqual(observed["release_count"], 2)
             self.assertIn('path: "Artifacts/ncnn.xcframework"', observed["manifest"])
             self.assertIn('path: "Artifacts/ncnn_vulkan.xcframework"', observed["manifest"])
+            self.assertIn('.product(name: "MoltenVK", package: "MoltenVK")', observed["manifest"])
             self.assertTrue(observed["cpu_artifact_exists"])
             self.assertTrue(observed["vulkan_artifact_exists"])
 
@@ -948,6 +1025,43 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("-DCMAKE_C_COMPILER_LAUNCHER=ccache", command)
         self.assertNotIn("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", command)
 
+    def test_vulkan_cmake_configure_strong_links_moltenvk_and_disables_simplevk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            moltenvk_xcframework = temporary_root / "MoltenVK.xcframework"
+            framework_root = moltenvk_xcframework / "ios-arm64" / "MoltenVK.framework"
+            headers_root = framework_root / "Headers"
+            headers_root.mkdir(parents=True)
+            (framework_root / "MoltenVK").write_text("binary")
+            (moltenvk_xcframework / "Info.plist").write_bytes(
+                plistlib.dumps(
+                    {
+                        "AvailableLibraries": [
+                            {
+                                "LibraryIdentifier": "ios-arm64",
+                                "LibraryPath": "MoltenVK.framework",
+                                "SupportedArchitectures": ["arm64"],
+                                "SupportedPlatform": "ios",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            command = build_apple_xcframework._cmake_configure_command(
+                packaging.VULKAN_VARIANT,
+                packaging.VULKAN_VARIANT.platforms[0],
+                source_root=Path("/tmp/source"),
+                build_dir=Path("/tmp/build"),
+                install_dir=Path("/tmp/install"),
+                moltenvk_xcframework=moltenvk_xcframework,
+            )
+
+        self.assertIn("-DNCNN_VULKAN=ON", command)
+        self.assertIn("-DNCNN_SIMPLEVK=OFF", command)
+        self.assertIn(f"-DVulkan_LIBRARY={framework_root / 'MoltenVK'}", command)
+        self.assertIn(f"-DVulkan_INCLUDE_DIR={headers_root}", command)
+
     def test_compiler_cache_environment_uses_wrapper_binaries_when_ccache_available(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             wrapper_root = Path(temporary_directory)
@@ -1121,7 +1235,7 @@ class BuildCommandTests(unittest.TestCase):
                 env={"PATH": "/usr/bin:/bin"},
             )
 
-    def test_vulkan_xcframework_validation_requires_weak_vulkan_loader(self) -> None:
+    def test_vulkan_xcframework_validation_requires_strong_moltenvk_dependency(self) -> None:
         with mock.patch(
             "scripts.spm.build_apple_xcframework.validate_mergeable_xcframework.validate_xcframework"
         ) as validate_mock:
@@ -1135,10 +1249,13 @@ class BuildCommandTests(unittest.TestCase):
             validate_mock.assert_called_once_with(
                 Path("/tmp/ncnn_vulkan.xcframework"),
                 [platform.swiftpm_platform for platform in packaging.VULKAN_VARIANT.platforms],
-                require_weak_dependencies=["@rpath/libvulkan.dylib"],
+                require_dependencies=["@rpath/MoltenVK.framework/MoltenVK"],
+                require_strong_dependencies=["@rpath/MoltenVK.framework/MoltenVK"],
+                require_weak_dependencies=[],
+                forbid_dependencies=["@rpath/libvulkan.dylib", "@rpath/libvulkan.1.dylib"],
             )
 
-    def test_cpu_xcframework_validation_does_not_require_vulkan_loader(self) -> None:
+    def test_cpu_xcframework_validation_does_not_require_runtime_dependency(self) -> None:
         with mock.patch(
             "scripts.spm.build_apple_xcframework.validate_mergeable_xcframework.validate_xcframework"
         ) as validate_mock:
@@ -1152,7 +1269,10 @@ class BuildCommandTests(unittest.TestCase):
             validate_mock.assert_called_once_with(
                 Path("/tmp/ncnn.xcframework"),
                 [platform.swiftpm_platform for platform in packaging.CPU_VARIANT.platforms],
+                require_dependencies=[],
+                require_strong_dependencies=[],
                 require_weak_dependencies=[],
+                forbid_dependencies=[],
             )
 
 

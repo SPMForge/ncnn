@@ -28,7 +28,33 @@ class Variant:
     module_name: str
     platforms: tuple[Platform, ...]
     runtime_dependency_model: str = "none"
+    runtime_dependency_supplier: str = "none"
+    runtime_dependencies: tuple[str, ...] = ()
+    strong_runtime_dependencies: tuple[str, ...] = ()
     weak_runtime_dependencies: tuple[str, ...] = ()
+    forbidden_runtime_dependencies: tuple[str, ...] = ()
+    swiftpm_dependencies: tuple["SwiftPackageDependency", ...] = ()
+    runtime_support_target: "RuntimeSupportTarget | None" = None
+
+
+@dataclass(frozen=True)
+class SwiftPackageDependency:
+    package_name: str
+    url: str
+    exact_version: str
+
+
+@dataclass(frozen=True)
+class SwiftPackageProductDependency:
+    product_name: str
+    package_name: str
+
+
+@dataclass(frozen=True)
+class RuntimeSupportTarget:
+    target_name: str
+    path: str
+    product_dependencies: tuple[SwiftPackageProductDependency, ...]
 
 
 @dataclass(frozen=True)
@@ -37,6 +63,12 @@ class ReleaseAsset:
     upstream_tag: str
     package_tag: str
     checksum: str
+    runtime_dependency_model: str | None = None
+    runtime_dependency_supplier: str | None = None
+    runtime_dependencies: tuple[str, ...] | None = None
+    strong_runtime_dependencies: tuple[str, ...] | None = None
+    weak_runtime_dependencies: tuple[str, ...] | None = None
+    forbidden_runtime_dependencies: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +86,31 @@ TOOLCHAIN_FILE = REPO_ROOT / "toolchains" / "ios.toolchain.cmake"
 CURRENT_RELEASE_METADATA_PATH = SCRIPTS_ROOT / "current_release.json"
 PLATFORM_METADATA_PATH = SCRIPTS_ROOT / "platforms.json"
 PACKAGE_SWIFT_PATH = REPO_ROOT / "Package.swift"
-BUILD_ARTIFACT_METADATA_SCHEMA_VERSION = 1
+BUILD_ARTIFACT_METADATA_SCHEMA_VERSION = 2
+MOLTENVK_PACKAGE = SwiftPackageDependency(
+    package_name="MoltenVK",
+    url="https://github.com/SPMForge/MoltenVK.git",
+    exact_version="1.4.1-alpha.5",
+)
+MOLTENVK_PRODUCT = SwiftPackageProductDependency(
+    product_name="MoltenVK",
+    package_name="MoltenVK",
+)
+MOLTENVK_RUNTIME_SUPPORT_TARGET = RuntimeSupportTarget(
+    target_name="ncnn_vulkan_runtime",
+    path="Sources/ncnn_vulkan_runtime",
+    product_dependencies=(MOLTENVK_PRODUCT,),
+)
+MOLTENVK_ARTIFACT_URL = (
+    "https://github.com/SPMForge/MoltenVK/releases/download/"
+    f"{MOLTENVK_PACKAGE.exact_version}/MoltenVK-{MOLTENVK_PACKAGE.exact_version}.xcframework.zip"
+)
+MOLTENVK_ARTIFACT_CHECKSUM = "a22ca302e2c1eda37645741c77b3fa6744c6b5f08985571a603968d24cc47826"
+MOLTENVK_STRONG_INSTALL_NAME = "@rpath/MoltenVK.framework/MoltenVK"
+RETIRED_VULKAN_LOADER_INSTALL_NAMES = (
+    "@rpath/libvulkan.dylib",
+    "@rpath/libvulkan.1.dylib",
+)
 PACKAGE_PLATFORM_ORDER = ("ios", "macos", "ios-maccatalyst", "tvos", "watchos", "xros")
 PACKAGE_PLATFORM_FUNCTIONS = {
     "ios": "iOS",
@@ -105,14 +161,18 @@ VULKAN_VARIANT = Variant(
         Platform("iOS", "ios", "OS64", "generic/platform=iOS", ("arm64",), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["ios"]),
         Platform("iOS Simulator", "ios-simulator", "SIMULATORARM64", "generic/platform=iOS Simulator", ("arm64", "x86_64"), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["ios"]),
         Platform("macOS", "macos", "MAC", "generic/platform=macOS", ("arm64", "x86_64"), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["macos"]),
-        Platform("Mac Catalyst", "ios-maccatalyst", "MAC_CATALYST", "generic/platform=macOS,variant=Mac Catalyst", ("arm64", "x86_64"), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["ios-maccatalyst"]),
         Platform("tvOS", "tvos", "TVOS", "generic/platform=tvOS", ("arm64",), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["tvos"]),
         Platform("tvOS Simulator", "tvos-simulator", "SIMULATORARM64_TVOS", "generic/platform=tvOS Simulator", ("arm64", "x86_64"), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["tvos"]),
         Platform("visionOS", "xros", "VISIONOS", "generic/platform=visionOS", ("arm64",), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["xros"]),
         Platform("visionOS Simulator", "xros-simulator", "SIMULATOR_VISIONOS", "generic/platform=visionOS Simulator", ("arm64", "x86_64"), PACKAGE_PLATFORM_DEPLOYMENT_TARGETS["xros"]),
     ),
-    runtime_dependency_model="weak-link",
-    weak_runtime_dependencies=("@rpath/libvulkan.dylib",),
+    runtime_dependency_model="strong-link",
+    runtime_dependency_supplier="package:MoltenVK/product:MoltenVK",
+    runtime_dependencies=(MOLTENVK_STRONG_INSTALL_NAME,),
+    strong_runtime_dependencies=(MOLTENVK_STRONG_INSTALL_NAME,),
+    forbidden_runtime_dependencies=RETIRED_VULKAN_LOADER_INSTALL_NAMES,
+    swiftpm_dependencies=(MOLTENVK_PACKAGE,),
+    runtime_support_target=MOLTENVK_RUNTIME_SUPPORT_TARGET,
 )
 
 VARIANTS = (CPU_VARIANT, VULKAN_VARIANT)
@@ -198,8 +258,145 @@ def variant_for_target_name(target_name: str) -> Variant:
         raise ValueError(f"unsupported variant target name: {target_name}") from error
 
 
+def _optional_tuple_field(payload: dict[str, object], field_name: str) -> tuple[str, ...] | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"invalid {field_name} in release metadata")
+    return tuple(value)
+
+
+def _optional_string_field(payload: dict[str, object], field_name: str) -> str | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"invalid {field_name} in release metadata")
+    return value
+
+
+def release_asset_from_current_release_record(payload: dict[str, object]) -> ReleaseAsset:
+    target_name = payload.get("target_name")
+    upstream_tag = payload.get("upstream_tag")
+    package_tag = payload.get("package_tag")
+    checksum = payload.get("checksum")
+    if not isinstance(target_name, str) or not target_name:
+        raise ValueError("invalid target_name in release metadata")
+    if not isinstance(upstream_tag, str) or not upstream_tag:
+        raise ValueError("invalid upstream_tag in release metadata")
+    if not isinstance(package_tag, str) or not package_tag:
+        raise ValueError("invalid package_tag in release metadata")
+    if not isinstance(checksum, str) or not checksum:
+        raise ValueError("invalid checksum in release metadata")
+    return ReleaseAsset(
+        variant=variant_for_target_name(target_name),
+        upstream_tag=upstream_tag,
+        package_tag=package_tag,
+        checksum=checksum,
+        runtime_dependency_model=_optional_string_field(payload, "runtime_dependency_model"),
+        runtime_dependency_supplier=_optional_string_field(payload, "runtime_dependency_supplier"),
+        runtime_dependencies=_optional_tuple_field(payload, "runtime_dependencies"),
+        strong_runtime_dependencies=_optional_tuple_field(payload, "strong_runtime_dependencies"),
+        weak_runtime_dependencies=_optional_tuple_field(payload, "weak_runtime_dependencies"),
+        forbidden_runtime_dependencies=_optional_tuple_field(payload, "forbidden_runtime_dependencies"),
+    )
+
+
 def required_weak_dependencies_for_variant(variant: Variant) -> list[str]:
     return list(variant.weak_runtime_dependencies)
+
+
+def required_dependencies_for_variant(variant: Variant) -> list[str]:
+    return list(variant.runtime_dependencies)
+
+
+def required_strong_dependencies_for_variant(variant: Variant) -> list[str]:
+    return list(variant.strong_runtime_dependencies)
+
+
+def forbidden_dependencies_for_variant(variant: Variant) -> list[str]:
+    return list(variant.forbidden_runtime_dependencies)
+
+
+def _release_runtime_dependency_model(release: ReleaseAsset) -> str:
+    return release.runtime_dependency_model or release.variant.runtime_dependency_model
+
+
+def _release_uses_variant_runtime_closure(release: ReleaseAsset) -> bool:
+    return _release_runtime_dependency_model(release) == release.variant.runtime_dependency_model
+
+
+def _swiftpm_dependencies_for_release(release: ReleaseAsset) -> tuple[SwiftPackageDependency, ...]:
+    if not _release_uses_variant_runtime_closure(release):
+        return ()
+    return release.variant.swiftpm_dependencies
+
+
+def _runtime_support_target_for_release(release: ReleaseAsset) -> RuntimeSupportTarget | None:
+    if not _release_uses_variant_runtime_closure(release):
+        return None
+    return release.variant.runtime_support_target
+
+
+def product_targets_for_release(release: ReleaseAsset) -> list[str]:
+    targets = [release.variant.target_name]
+    support_target = _runtime_support_target_for_release(release)
+    if support_target is not None:
+        targets.append(support_target.target_name)
+    return targets
+
+
+def _unique_swiftpm_dependencies(releases: list[ReleaseAsset]) -> list[SwiftPackageDependency]:
+    dependencies: dict[str, SwiftPackageDependency] = {}
+    for release in releases:
+        for dependency in _swiftpm_dependencies_for_release(release):
+            existing_dependency = dependencies.get(dependency.package_name)
+            if existing_dependency is not None and existing_dependency != dependency:
+                raise ValueError(f"conflicting SwiftPM dependency contract for {dependency.package_name}")
+            dependencies[dependency.package_name] = dependency
+    return [dependencies[key] for key in sorted(dependencies)]
+
+
+def _runtime_support_targets(releases: list[ReleaseAsset]) -> list[RuntimeSupportTarget]:
+    targets: dict[str, RuntimeSupportTarget] = {}
+    for release in releases:
+        support_target = _runtime_support_target_for_release(release)
+        if support_target is None:
+            continue
+        existing_target = targets.get(support_target.target_name)
+        if existing_target is not None and existing_target != support_target:
+            raise ValueError(f"conflicting runtime support target contract for {support_target.target_name}")
+        targets[support_target.target_name] = support_target
+    return [targets[key] for key in sorted(targets)]
+
+
+def _render_product_dependency(dependency: SwiftPackageProductDependency) -> str:
+    return f'.product(name: "{dependency.product_name}", package: "{dependency.package_name}")'
+
+
+def write_runtime_support_sources(package_root: Path, releases: list[ReleaseAsset]) -> None:
+    for support_target in _runtime_support_targets(releases):
+        source_root = package_root / support_target.path
+        source_root.mkdir(parents=True, exist_ok=True)
+        include_root = source_root / "include"
+        include_root.mkdir(parents=True, exist_ok=True)
+        anchor_name = support_target.target_name.replace("-", "_")
+        header_name = f"{support_target.target_name}.h"
+        header_guard = f"{anchor_name.upper()}_H"
+        (include_root / header_name).write_text(
+            f"#ifndef {header_guard}\n"
+            f"#define {header_guard}\n"
+            "\n"
+            f"void {anchor_name}_anchor(void);\n"
+            "\n"
+            f"#endif /* {header_guard} */\n"
+        )
+        (source_root / "runtime_anchor.c").write_text(
+            f'#include "{header_name}"\n'
+            "\n"
+            f"void {anchor_name}_anchor(void) {{}}\n"
+        )
 
 
 def render_package_platforms() -> list[str]:
@@ -214,6 +411,8 @@ def _render_package_manifest(
     releases: list[ReleaseAsset],
     binary_target_lines: list[list[str]],
 ) -> str:
+    swiftpm_dependencies = _unique_swiftpm_dependencies(releases)
+    runtime_support_targets = _runtime_support_targets(releases)
     lines = [
         "// swift-tools-version: 5.9",
         "",
@@ -228,19 +427,54 @@ def _render_package_manifest(
     ]
 
     for release in releases:
+        product_targets = ", ".join(f'"{target_name}"' for target_name in product_targets_for_release(release))
         lines.append(
-            f'        .library(name: "{release.variant.product_name}", targets: ["{release.variant.target_name}"]),'
+            f'        .library(name: "{release.variant.product_name}", targets: [{product_targets}]),'
         )
 
     lines.extend(
         [
             "    ],",
+        ]
+    )
+
+    if swiftpm_dependencies:
+        lines.extend(
+            [
+                "    dependencies: [",
+                *(
+                    f'        .package(url: "{dependency.url}", exact: "{dependency.exact_version}"),'
+                    for dependency in swiftpm_dependencies
+                ),
+                "    ],",
+            ]
+        )
+
+    lines.extend(
+        [
             "    targets: [",
         ]
     )
 
     for binary_target in binary_target_lines:
         lines.extend(binary_target)
+
+    for support_target in runtime_support_targets:
+        dependency_lines = [
+            f"                {_render_product_dependency(dependency)},"
+            for dependency in support_target.product_dependencies
+        ]
+        lines.extend(
+            [
+                "        .target(",
+                f'            name: "{support_target.target_name}",',
+                "            dependencies: [",
+                *dependency_lines,
+                "            ],",
+                f'            path: "{support_target.path}"',
+                "        ),",
+            ]
+        )
 
     lines.extend(
         [
@@ -301,7 +535,11 @@ def build_artifact_metadata_payload(release: ReleaseAsset, artifact_path: str) -
         "checksum": release.checksum,
         "platforms": [platform.swiftpm_platform for platform in release.variant.platforms],
         "runtime_dependency_model": release.variant.runtime_dependency_model,
+        "runtime_dependency_supplier": release.variant.runtime_dependency_supplier,
+        "runtime_dependencies": required_dependencies_for_variant(release.variant),
+        "strong_runtime_dependencies": required_strong_dependencies_for_variant(release.variant),
         "weak_runtime_dependencies": required_weak_dependencies_for_variant(release.variant),
+        "forbidden_runtime_dependencies": forbidden_dependencies_for_variant(release.variant),
     }
 
 
@@ -367,12 +605,39 @@ def load_build_artifact_metadata(path: Path) -> BuildArtifactMetadata:
             f"invalid runtime_dependency_model in {path}: "
             f"expected {variant.runtime_dependency_model!r}, found {actual_runtime_dependency_model!r}"
         )
+    actual_runtime_dependency_supplier = _require_string_field(payload, "runtime_dependency_supplier", path)
+    if actual_runtime_dependency_supplier != variant.runtime_dependency_supplier:
+        raise ValueError(
+            f"invalid runtime_dependency_supplier in {path}: "
+            f"expected {variant.runtime_dependency_supplier!r}, found {actual_runtime_dependency_supplier!r}"
+        )
+    actual_runtime_dependencies = _require_optional_string_list_field(payload, "runtime_dependencies", path)
+    expected_runtime_dependencies = required_dependencies_for_variant(variant)
+    if actual_runtime_dependencies != expected_runtime_dependencies:
+        raise ValueError(
+            f"invalid runtime_dependencies in {path}: "
+            f"expected {expected_runtime_dependencies!r}, found {actual_runtime_dependencies!r}"
+        )
+    actual_strong_runtime_dependencies = _require_optional_string_list_field(payload, "strong_runtime_dependencies", path)
+    expected_strong_runtime_dependencies = required_strong_dependencies_for_variant(variant)
+    if actual_strong_runtime_dependencies != expected_strong_runtime_dependencies:
+        raise ValueError(
+            f"invalid strong_runtime_dependencies in {path}: "
+            f"expected {expected_strong_runtime_dependencies!r}, found {actual_strong_runtime_dependencies!r}"
+        )
     actual_weak_runtime_dependencies = _require_optional_string_list_field(payload, "weak_runtime_dependencies", path)
     expected_weak_runtime_dependencies = required_weak_dependencies_for_variant(variant)
     if actual_weak_runtime_dependencies != expected_weak_runtime_dependencies:
         raise ValueError(
             f"invalid weak_runtime_dependencies in {path}: "
             f"expected {expected_weak_runtime_dependencies!r}, found {actual_weak_runtime_dependencies!r}"
+        )
+    actual_forbidden_runtime_dependencies = _require_optional_string_list_field(payload, "forbidden_runtime_dependencies", path)
+    expected_forbidden_runtime_dependencies = forbidden_dependencies_for_variant(variant)
+    if actual_forbidden_runtime_dependencies != expected_forbidden_runtime_dependencies:
+        raise ValueError(
+            f"invalid forbidden_runtime_dependencies in {path}: "
+            f"expected {expected_forbidden_runtime_dependencies!r}, found {actual_forbidden_runtime_dependencies!r}"
         )
 
     return BuildArtifactMetadata(

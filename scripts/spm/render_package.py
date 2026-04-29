@@ -88,7 +88,11 @@ def _write_combined_metadata(
                 "checksum": release.checksum,
                 "platforms": [platform.swiftpm_platform for platform in release.variant.platforms],
                 "runtime_dependency_model": release.variant.runtime_dependency_model,
+                "runtime_dependency_supplier": release.variant.runtime_dependency_supplier,
+                "runtime_dependencies": packaging.required_dependencies_for_variant(release.variant),
+                "strong_runtime_dependencies": packaging.required_strong_dependencies_for_variant(release.variant),
                 "weak_runtime_dependencies": packaging.required_weak_dependencies_for_variant(release.variant),
+                "forbidden_runtime_dependencies": packaging.forbidden_dependencies_for_variant(release.variant),
             }
             for release in releases
         ],

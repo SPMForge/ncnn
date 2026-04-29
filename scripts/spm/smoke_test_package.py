@@ -37,6 +37,41 @@ def _write_consumer_package(package_root: Path, variant: packaging.Variant, xcfr
     package_root.mkdir(parents=True, exist_ok=True)
     (package_root / "Smoke").mkdir(parents=True, exist_ok=True)
     local_xcframework_path = _stage_xcframework(package_root, xcframework_path)
+    release = packaging.ReleaseAsset(
+        variant=variant,
+        upstream_tag="00000000",
+        package_tag="0.0.0-smoke",
+        checksum="0" * 64,
+    )
+    packaging.write_runtime_support_sources(package_root, [release])
+
+    package_dependency_lines = [
+        f'        .package(url: "{dependency.url}", exact: "{dependency.exact_version}"),'
+        for dependency in variant.swiftpm_dependencies
+    ]
+    dependency_section = ""
+    if package_dependency_lines:
+        dependency_section = "    dependencies: [\n" + "\n".join(package_dependency_lines) + "\n    ],\n"
+
+    runtime_target_section = ""
+    if variant.runtime_support_target is not None:
+        runtime_dependencies = "\n".join(
+            f'                .product(name: "{dependency.product_name}", package: "{dependency.package_name}"),'
+            for dependency in variant.runtime_support_target.product_dependencies
+        )
+        runtime_target_section = f"""        .target(
+            name: "{variant.runtime_support_target.target_name}",
+            dependencies: [
+{runtime_dependencies}
+            ],
+            path: "{variant.runtime_support_target.path}"
+        ),
+"""
+
+    executable_dependencies = [f'"{variant.target_name}"']
+    if variant.runtime_support_target is not None:
+        executable_dependencies.append(f'"{variant.runtime_support_target.target_name}"')
+    executable_dependency_list = ", ".join(executable_dependencies)
 
     package_swift = f"""// swift-tools-version: 5.9
 
@@ -50,11 +85,13 @@ let package = Package(
     products: [
         .executable(name: "Smoke", targets: ["Smoke"]),
     ],
+{dependency_section}\
     targets: [
         .binaryTarget(name: "{variant.target_name}", path: "{local_xcframework_path.as_posix()}"),
+{runtime_target_section}\
         .executableTarget(
             name: "Smoke",
-            dependencies: ["{variant.target_name}"],
+            dependencies: [{executable_dependency_list}],
             path: "Smoke"
         ),
     ],
@@ -62,7 +99,20 @@ let package = Package(
 )
 """
 
-    main_cpp = f"""#include <{variant.target_name}/net.h>
+    if variant is packaging.VULKAN_VARIANT:
+        main_cpp = f"""#include <{variant.target_name}/net.h>
+#include <{variant.target_name}/gpu.h>
+
+int main()
+{{
+    ncnn::Net net;
+    (void)net;
+    int gpu_count = ncnn::get_gpu_count();
+    return gpu_count < 0 ? 2 : 0;
+}}
+"""
+    else:
+        main_cpp = f"""#include <{variant.target_name}/net.h>
 
 int main()
 {{
@@ -99,6 +149,7 @@ def main() -> int:
             ],
             package_root,
         )
+        _run(["swift", "run", "-c", "release", "Smoke"], package_root)
 
     return 0
 

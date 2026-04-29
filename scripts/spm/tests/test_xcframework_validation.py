@@ -490,7 +490,7 @@ class XCFrameworkValidationTests(unittest.TestCase):
 
             self.assertEqual(result["issues"], [])
 
-    def test_accepts_required_weak_vulkan_loader_dependency(self) -> None:
+    def test_accepts_required_strong_moltenvk_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             xcframework_path = self._write_xcframework(
@@ -522,19 +522,19 @@ class XCFrameworkValidationTests(unittest.TestCase):
                         "LC_BUILD_VERSION\n    minos 13.0\n platform IOS\n",
                         f"""{binary_path}:
 \t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
-\t@rpath/libvulkan.dylib (compatibility version 1.0.0, current version 1.0.0, weak)
+\t@rpath/MoltenVK.framework/MoltenVK (compatibility version 1.0.0, current version 1.0.0)
 """,
                     ],
                 ):
                     result = validate_mergeable_xcframework.validate_xcframework(
                         xcframework_path,
                         ["ios"],
-                        require_weak_dependencies=["@rpath/libvulkan.dylib"],
+                        require_strong_dependencies=["@rpath/MoltenVK.framework/MoltenVK"],
                     )
 
             self.assertEqual(result["issues"], [])
 
-    def test_reports_required_vulkan_loader_dependency_when_strong_linked(self) -> None:
+    def test_reports_required_moltenvk_dependency_when_weak_linked(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             xcframework_path = self._write_xcframework(
@@ -566,22 +566,22 @@ class XCFrameworkValidationTests(unittest.TestCase):
                         "LC_BUILD_VERSION\n    minos 13.0\n platform IOS\n",
                         f"""{binary_path}:
 \t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
-\t@rpath/libvulkan.dylib (compatibility version 1.0.0, current version 1.0.0)
+\t@rpath/MoltenVK.framework/MoltenVK (compatibility version 1.0.0, current version 1.0.0, weak)
 """,
                     ],
                 ):
                     result = validate_mergeable_xcframework.validate_xcframework(
                         xcframework_path,
                         ["ios"],
-                        require_weak_dependencies=["@rpath/libvulkan.dylib"],
+                        require_strong_dependencies=["@rpath/MoltenVK.framework/MoltenVK"],
                     )
 
             self.assertIn(
-                "ios: required dependency @rpath/libvulkan.dylib must be weak-linked",
+                "ios: required dependency @rpath/MoltenVK.framework/MoltenVK must be strong-linked",
                 result["issues"],
             )
 
-    def test_reports_required_vulkan_loader_dependency_when_one_arch_is_strong_linked(self) -> None:
+    def test_reports_required_moltenvk_dependency_when_one_arch_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             xcframework_path = self._write_xcframework(
@@ -614,71 +614,73 @@ class XCFrameworkValidationTests(unittest.TestCase):
                         "LC_BUILD_VERSION\n    minos 13.0\n platform IOSSIMULATOR\n",
                         f"""{binary_path} (architecture x86_64):
 \t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
+{binary_path} (architecture arm64):
+\t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
+\t@rpath/MoltenVK.framework/MoltenVK (compatibility version 1.0.0, current version 1.0.0)
+""",
+                    ],
+                ):
+                    result = validate_mergeable_xcframework.validate_xcframework(
+                        xcframework_path,
+                        ["ios-simulator"],
+                        require_strong_dependencies=["@rpath/MoltenVK.framework/MoltenVK"],
+                    )
+
+            self.assertIn(
+                "ios-simulator: missing required dependency @rpath/MoltenVK.framework/MoltenVK",
+                result["issues"],
+            )
+
+    def test_reports_forbidden_retired_vulkan_loader_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            xcframework_path = self._write_xcframework(
+                temporary_root,
+                libraries=[
+                    {
+                        "LibraryIdentifier": "ios-arm64_x86_64-simulator",
+                        "LibraryPath": "ncnn_vulkan.framework",
+                        "MergeableMetadata": True,
+                        "SupportedArchitectures": ["arm64", "x86_64"],
+                        "SupportedPlatform": "ios",
+                        "SupportedPlatformVariant": "simulator",
+                    }
+                ],
+            )
+            framework_root = self._write_framework_bundle(
+                xcframework_path / "ios-arm64_x86_64-simulator",
+                framework_name="ncnn_vulkan",
+                versioned=False,
+            )
+            binary_path = framework_root / "ncnn_vulkan"
+
+            with mock.patch(
+                "scripts.spm.validate_mergeable_xcframework.shutil.which",
+                side_effect=lambda command: f"/usr/bin/{command}",
+            ):
+                with mock.patch(
+                    "scripts.spm.validate_mergeable_xcframework.command_output",
+                    side_effect=[
+                        "LC_BUILD_VERSION\n    minos 13.0\n platform IOSSIMULATOR\n",
+                        f"""{binary_path} (architecture x86_64):
+\t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
+\t@rpath/MoltenVK.framework/MoltenVK (compatibility version 1.0.0, current version 1.0.0)
+{binary_path} (architecture arm64):
+\t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
+\t@rpath/MoltenVK.framework/MoltenVK (compatibility version 1.0.0, current version 1.0.0)
 \t@rpath/libvulkan.dylib (compatibility version 1.0.0, current version 1.0.0)
-{binary_path} (architecture arm64):
-\t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
-\t@rpath/libvulkan.dylib (compatibility version 1.0.0, current version 1.0.0, weak)
 """,
                     ],
                 ):
                     result = validate_mergeable_xcframework.validate_xcframework(
                         xcframework_path,
                         ["ios-simulator"],
-                        require_weak_dependencies=["@rpath/libvulkan.dylib"],
+                        require_strong_dependencies=["@rpath/MoltenVK.framework/MoltenVK"],
+                        forbid_dependencies=["@rpath/libvulkan.dylib"],
                     )
 
             self.assertIn(
-                "ios-simulator: required dependency @rpath/libvulkan.dylib must be weak-linked",
-                result["issues"],
-            )
-
-    def test_reports_required_vulkan_loader_dependency_when_one_arch_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            xcframework_path = self._write_xcframework(
-                temporary_root,
-                libraries=[
-                    {
-                        "LibraryIdentifier": "ios-arm64_x86_64-simulator",
-                        "LibraryPath": "ncnn_vulkan.framework",
-                        "MergeableMetadata": True,
-                        "SupportedArchitectures": ["arm64", "x86_64"],
-                        "SupportedPlatform": "ios",
-                        "SupportedPlatformVariant": "simulator",
-                    }
-                ],
-            )
-            framework_root = self._write_framework_bundle(
-                xcframework_path / "ios-arm64_x86_64-simulator",
-                framework_name="ncnn_vulkan",
-                versioned=False,
-            )
-            binary_path = framework_root / "ncnn_vulkan"
-
-            with mock.patch(
-                "scripts.spm.validate_mergeable_xcframework.shutil.which",
-                side_effect=lambda command: f"/usr/bin/{command}",
-            ):
-                with mock.patch(
-                    "scripts.spm.validate_mergeable_xcframework.command_output",
-                    side_effect=[
-                        "LC_BUILD_VERSION\n    minos 13.0\n platform IOSSIMULATOR\n",
-                        f"""{binary_path} (architecture x86_64):
-\t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
-{binary_path} (architecture arm64):
-\t@rpath/ncnn_vulkan.framework/ncnn_vulkan (compatibility version 1.0.0, current version 1.0.26)
-\t@rpath/libvulkan.dylib (compatibility version 1.0.0, current version 1.0.0, weak)
-""",
-                    ],
-                ):
-                    result = validate_mergeable_xcframework.validate_xcframework(
-                        xcframework_path,
-                        ["ios-simulator"],
-                        require_weak_dependencies=["@rpath/libvulkan.dylib"],
-                    )
-
-            self.assertIn(
-                "ios-simulator: missing required dependency @rpath/libvulkan.dylib",
+                "ios-simulator: forbidden dependency @rpath/libvulkan.dylib is linked",
                 result["issues"],
             )
 

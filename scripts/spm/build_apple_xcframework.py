@@ -31,6 +31,11 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("--source-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--developer-dir", help="Optional Xcode developer dir override.")
+    parser.add_argument(
+        "--moltenvk-xcframework",
+        type=Path,
+        help="Path to MoltenVK.xcframework used to build and strong-link the Vulkan variant.",
+    )
     parser.add_argument("--skip-smoke-test", action="store_true")
     return parser.parse_args()
 
@@ -102,6 +107,7 @@ def _cmake_configure_command(
     source_root: Path,
     build_dir: Path,
     install_dir: Path,
+    moltenvk_xcframework: Path | None = None,
 ) -> list[str]:
     command = [
         "cmake",
@@ -130,11 +136,77 @@ def _cmake_configure_command(
     ]
 
     if variant is packaging.VULKAN_VARIANT:
-        command.append("-DNCNN_VULKAN=ON")
+        if moltenvk_xcframework is None:
+            raise ValueError("MoltenVK.xcframework is required when building ncnn_vulkan")
+        moltenvk_framework_path = _moltenvk_framework_path_for_platform(moltenvk_xcframework, platform)
+        command.extend(
+            [
+                "-DNCNN_VULKAN=ON",
+                "-DNCNN_SIMPLEVK=OFF",
+                f"-DVulkan_LIBRARY={_framework_binary_path(moltenvk_framework_path)}",
+                f"-DVulkan_INCLUDE_DIR={_framework_active_root(moltenvk_framework_path) / 'Headers'}",
+            ]
+        )
     else:
         command.append("-DNCNN_VULKAN=OFF")
 
     return command
+
+
+def _xcframework_platform_key(entry: dict[str, object]) -> str:
+    platform = entry.get("SupportedPlatform")
+    variant = entry.get("SupportedPlatformVariant")
+    if not isinstance(platform, str):
+        return "unknown"
+    if not isinstance(variant, str):
+        return platform
+    return f"{platform}-{variant}"
+
+
+def _framework_binary_path(framework_path: Path) -> Path:
+    framework_name = framework_path.stem
+    versioned_binary_path = framework_path / "Versions" / "Current" / framework_name
+    if versioned_binary_path.exists():
+        return versioned_binary_path
+    return framework_path / framework_name
+
+
+def _framework_active_root(framework_path: Path) -> Path:
+    versioned_root = framework_path / "Versions" / "Current"
+    if versioned_root.exists():
+        return versioned_root.resolve()
+    return framework_path
+
+
+def _moltenvk_framework_path_for_platform(moltenvk_xcframework: Path, platform: packaging.Platform) -> Path:
+    info_path = moltenvk_xcframework / "Info.plist"
+    if not info_path.is_file():
+        raise FileNotFoundError(f"MoltenVK XCFramework missing Info.plist: {info_path}")
+
+    info = plistlib.loads(info_path.read_bytes())
+    available_libraries = info.get("AvailableLibraries")
+    if not isinstance(available_libraries, list):
+        raise ValueError(f"MoltenVK XCFramework Info.plist missing AvailableLibraries: {info_path}")
+
+    for entry in available_libraries:
+        if not isinstance(entry, dict) or _xcframework_platform_key(entry) != platform.swiftpm_platform:
+            continue
+        library_identifier = entry.get("LibraryIdentifier")
+        library_path = entry.get("LibraryPath")
+        if not isinstance(library_identifier, str) or not isinstance(library_path, str):
+            raise ValueError(f"invalid MoltenVK library entry for {platform.swiftpm_platform}")
+        framework_path = moltenvk_xcframework / library_identifier / library_path
+        if not framework_path.is_dir():
+            raise FileNotFoundError(f"MoltenVK framework slice is missing: {framework_path}")
+        binary_path = _framework_binary_path(framework_path)
+        headers_path = _framework_active_root(framework_path) / "Headers"
+        if not binary_path.is_file():
+            raise FileNotFoundError(f"MoltenVK framework binary is missing: {binary_path}")
+        if not headers_path.is_dir():
+            raise FileNotFoundError(f"MoltenVK framework headers are missing: {headers_path}")
+        return framework_path
+
+    raise ValueError(f"MoltenVK XCFramework does not contain required platform {platform.swiftpm_platform}")
 
 
 def _build_command(build_dir: Path) -> list[str]:
@@ -414,7 +486,10 @@ def _validate_xcframework(xcframework_path: Path, variant: packaging.Variant) ->
     result = validate_mergeable_xcframework.validate_xcframework(
         xcframework_path,
         [platform.swiftpm_platform for platform in variant.platforms],
+        require_dependencies=packaging.required_dependencies_for_variant(variant),
+        require_strong_dependencies=packaging.required_strong_dependencies_for_variant(variant),
         require_weak_dependencies=packaging.required_weak_dependencies_for_variant(variant),
+        forbid_dependencies=packaging.forbidden_dependencies_for_variant(variant),
     )
     if result["issues"]:
         print(json.dumps({"xcframeworks": [result]}, indent=2), file=sys.stderr)
@@ -427,13 +502,24 @@ def _build_platform_slice(
     platform: packaging.Platform,
     workspace_root: Path,
     environment: dict[str, str],
+    moltenvk_xcframework: Path | None = None,
 ) -> tuple[Path, Path]:
     build_dir = workspace_root / "build" / platform.swiftpm_platform
     install_dir = build_dir / "install"
     archive_path = build_dir / f"{variant.target_name}-{platform.swiftpm_platform}.xcarchive"
     derived_data_path = build_dir / "DerivedData"
 
-    _run(_cmake_configure_command(variant, platform, source_root, build_dir, install_dir), env=environment)
+    _run(
+        _cmake_configure_command(
+            variant,
+            platform,
+            source_root,
+            build_dir,
+            install_dir,
+            moltenvk_xcframework=moltenvk_xcframework,
+        ),
+        env=environment,
+    )
     _run(_build_command(build_dir), env=environment)
     _run(_archive_command(build_dir, archive_path, derived_data_path, platform), env=environment)
 
@@ -454,6 +540,11 @@ def main() -> int:
 
     if variant is packaging.VULKAN_VARIANT:
         _ensure_vulkan_sources(source_root)
+        if arguments.moltenvk_xcframework is None:
+            raise SystemExit("--moltenvk-xcframework is required for ncnn_vulkan")
+        moltenvk_xcframework = arguments.moltenvk_xcframework.resolve()
+    else:
+        moltenvk_xcframework = None
 
     workspace_root = arguments.output_dir.resolve() / variant.target_name
     if workspace_root.exists():
@@ -466,7 +557,14 @@ def main() -> int:
     staging_root = workspace_root / "staging"
 
     for platform in variant.platforms:
-        install_dir, dynamic_library = _build_platform_slice(source_root, variant, platform, workspace_root, environment)
+        install_dir, dynamic_library = _build_platform_slice(
+            source_root,
+            variant,
+            platform,
+            workspace_root,
+            environment,
+            moltenvk_xcframework=moltenvk_xcframework,
+        )
         if headers_path is None:
             headers_path = _stage_headers(install_dir, staging_root / variant.target_name, variant.module_name)
         staged_framework = _stage_framework_bundle(

@@ -156,7 +156,10 @@ def _validate_release_archives(release_inputs: list[ValidationReleaseInput]) -> 
         result = validate_mergeable_xcframework.validate_xcframework(
             release_input.archive_path,
             [platform.swiftpm_platform for platform in variant.platforms],
+            require_dependencies=packaging.required_dependencies_for_variant(variant),
+            require_strong_dependencies=packaging.required_strong_dependencies_for_variant(variant),
             require_weak_dependencies=packaging.required_weak_dependencies_for_variant(variant),
+            forbid_dependencies=packaging.forbidden_dependencies_for_variant(variant),
         )
         if result["issues"]:
             raise ValueError(
@@ -195,6 +198,10 @@ def _render_release_metadata(
     for release_input in release_inputs:
         command.extend(["--release-metadata", str(release_input.metadata_path)])
     _run(command, cwd=REPO_ROOT)
+    packaging.write_runtime_support_sources(
+        package_root,
+        [release_input.build_metadata.release_asset for release_input in release_inputs],
+    )
     return current_release_json
 
 
@@ -205,6 +212,10 @@ def _write_local_package_manifest(package_root: Path, package_name: str, release
         releases=[release_input.build_metadata.release_asset for release_input in release_inputs],
     )
     (package_root / "Package.swift").write_text(package_contents)
+    packaging.write_runtime_support_sources(
+        package_root,
+        [release_input.build_metadata.release_asset for release_input in release_inputs],
+    )
 
 
 def _extract_archive(zip_path: Path, destination_dir: Path) -> None:

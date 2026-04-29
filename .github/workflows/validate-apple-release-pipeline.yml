@@ -70,7 +70,7 @@ jobs:
           - variant: ncnn
             required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
           - variant: ncnn_vulkan
-            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator xros xros-simulator
+            required_platforms: ios ios-simulator macos tvos tvos-simulator xros xros-simulator
     runs-on: macos-15
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -112,7 +112,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
+          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           restore-keys: |
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
@@ -141,15 +141,28 @@ jobs:
             --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
             --destination "$RUNNER_TEMP/upstream-source"
 
+      - name: prepare-moltenvk-dependency
+        id: moltenvk
+        if: matrix.variant == 'ncnn_vulkan'
+        run: |
+          python3 scripts/spm/prepare_moltenvk_dependency.py \
+            --output-dir "$RUNNER_TEMP/moltenvk" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: build-xcframework
         id: build_xcframework
         run: |
-          python3 scripts/spm/build_apple_xcframework.py \
+          build_args=(
             --variant "${{ matrix.variant }}" \
             --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
             --package-tag "${{ needs.verify.outputs.package_tag }}" \
             --source-root "$RUNNER_TEMP/upstream-source" \
             --output-dir "$RUNNER_TEMP/spm-artifacts"
+          )
+          if [ "${{ matrix.variant }}" = "ncnn_vulkan" ]; then
+            build_args+=(--moltenvk-xcframework "${{ steps.moltenvk.outputs.xcframework_path }}")
+          fi
+          python3 scripts/spm/build_apple_xcframework.py "${build_args[@]}"
 
       - name: verify-ccache-payload
         id: verify_ccache_payload
@@ -185,7 +198,9 @@ jobs:
             validation_args+=(--require-platform "$platform")
           done
           if [ "${{ matrix.variant }}" = "ncnn_vulkan" ]; then
-            validation_args+=(--require-weak-dependency @rpath/libvulkan.dylib)
+            validation_args+=(--require-strong-dependency @rpath/MoltenVK.framework/MoltenVK)
+            validation_args+=(--forbid-dependency @rpath/libvulkan.dylib)
+            validation_args+=(--forbid-dependency @rpath/libvulkan.1.dylib)
           fi
           archive_path="$(find "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}" -maxdepth 1 -name '*.xcframework.zip' -print -quit)"
           if [ -z "$archive_path" ]; then
