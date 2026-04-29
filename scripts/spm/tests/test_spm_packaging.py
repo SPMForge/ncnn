@@ -395,7 +395,10 @@ class PackageRenderingTests(unittest.TestCase):
 
         self.assertIn('library(name: "NCNN", targets: ["ncnn"])', package_contents)
         self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
-        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.6")', package_contents)
+        self.assertIn(
+            f'.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "{packaging.MOLTENVK_PACKAGE.exact_version}")',
+            package_contents,
+        )
         self.assertIn(
             '.binaryTarget(\n'
             '            name: "ncnn",\n'
@@ -480,7 +483,10 @@ class PackageRenderingTests(unittest.TestCase):
             package_contents,
         )
         self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
-        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.6")', package_contents)
+        self.assertIn(
+            f'.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "{packaging.MOLTENVK_PACKAGE.exact_version}")',
+            package_contents,
+        )
 
     def test_build_artifact_metadata_payload_uses_schema_and_canonical_variant_fields(self) -> None:
         release = packaging.ReleaseAsset(
