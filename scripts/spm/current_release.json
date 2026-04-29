@@ -4,9 +4,10 @@
   "releases": [
     {
       "asset_name": "ncnn-20260113-apple.xcframework.zip",
-      "checksum": "1ee69cb9e83b59fe69afe374becd0d2b94292edbc1eff9d91cb7a5cf5f84ef6a",
+      "checksum": "7e617be59dddbbc722485feb2374c3e6096e0a8c88334f82745e102138eb413b",
+      "forbidden_runtime_dependencies": [],
       "module_name": "ncnn",
-      "package_tag": "1.0.20260113-alpha.5",
+      "package_tag": "1.0.20260113-alpha.14",
       "platforms": [
         "ios",
         "ios-simulator",
@@ -20,35 +21,46 @@
         "xros-simulator"
       ],
       "product_name": "NCNN",
+      "runtime_dependencies": [],
       "runtime_dependency_model": "none",
+      "runtime_dependency_supplier": "none",
+      "strong_runtime_dependencies": [],
       "target_name": "ncnn",
       "upstream_tag": "20260113",
-      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple.xcframework.zip",
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.14/ncnn-20260113-apple.xcframework.zip",
       "weak_runtime_dependencies": []
     },
     {
       "asset_name": "ncnn-20260113-apple-vulkan.xcframework.zip",
-      "checksum": "c427c1f8e5979e429203d09cecd5c83fe2538693744ab4ca297a81d7debde213",
+      "checksum": "aff6294d76e0f902e767867f99c98e87b06a83715bfd6d86f3e481e29afc45d3",
+      "forbidden_runtime_dependencies": [
+        "@rpath/libvulkan.dylib",
+        "@rpath/libvulkan.1.dylib"
+      ],
       "module_name": "ncnn_vulkan",
-      "package_tag": "1.0.20260113-alpha.5",
+      "package_tag": "1.0.20260113-alpha.14",
       "platforms": [
         "ios",
         "ios-simulator",
         "macos",
-        "ios-maccatalyst",
         "tvos",
         "tvos-simulator",
         "xros",
         "xros-simulator"
       ],
       "product_name": "NCNNVulkan",
-      "runtime_dependency_model": "weak-link",
+      "runtime_dependencies": [
+        "@rpath/MoltenVK.framework/MoltenVK"
+      ],
+      "runtime_dependency_model": "strong-link",
+      "runtime_dependency_supplier": "package:MoltenVK/product:MoltenVK",
+      "strong_runtime_dependencies": [
+        "@rpath/MoltenVK.framework/MoltenVK"
+      ],
       "target_name": "ncnn_vulkan",
       "upstream_tag": "20260113",
-      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple-vulkan.xcframework.zip",
-      "weak_runtime_dependencies": [
-        "@rpath/libvulkan.dylib"
-      ]
+      "url": "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.14/ncnn-20260113-apple-vulkan.xcframework.zip",
+      "weak_runtime_dependencies": []
     }
   ],
   "repo": "ncnn"
