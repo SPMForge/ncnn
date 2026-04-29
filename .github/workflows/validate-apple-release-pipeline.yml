@@ -10,6 +10,9 @@ on:
       upstream_tag:
         description: Optional fixed Tencent/ncnn tag in YYYYMMDD format for reproducible validation.
         required: false
+      moltenvk_version:
+        description: Optional MoltenVK prerelease tag for development validation only, such as 1.4.1-alpha.7.
+        required: false
 
 permissions:
   contents: read
@@ -78,6 +81,7 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
       HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache
+      SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -112,8 +116,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
+          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           restore-keys: |
+            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-
@@ -145,9 +150,15 @@ jobs:
         id: moltenvk
         if: matrix.variant == 'ncnn_vulkan'
         run: |
-          python3 scripts/spm/prepare_moltenvk_dependency.py \
-            --output-dir "$RUNNER_TEMP/moltenvk" \
+          moltenvk_args=(
+            --output-dir "$RUNNER_TEMP/moltenvk"
             --github-output "$GITHUB_OUTPUT"
+          )
+          if [ -n "$SPMFORGE_MOLTENVK_VERSION" ]; then
+            moltenvk_args+=(--version "$SPMFORGE_MOLTENVK_VERSION")
+          fi
+          python3 scripts/spm/prepare_moltenvk_dependency.py \
+            "${moltenvk_args[@]}"
 
       - name: build-xcframework
         id: build_xcframework
@@ -234,6 +245,8 @@ jobs:
     name: Validate generated package contract
     needs: build
     runs-on: macos-15-intel
+    env:
+      SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
     steps:
       - uses: actions/checkout@v6
         with:

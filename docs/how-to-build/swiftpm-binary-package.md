@@ -49,6 +49,8 @@ The Vulkan variant additionally uses:
 
 `MoltenVK.framework` is the runtime provider. `MoltenVKHeaders-<version>.zip` is the build-time C/C++ Vulkan include provider. Do not synthesize repo-local `MoltenVK` or `vulkan` include overlays from framework internals during ncnn packaging.
 
+Release builds use the pinned MoltenVK exact dependency recorded by `scripts/spm/packaging.py` so published package manifests are reproducible. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency. When checksums are not supplied, the prepare script resolves SHA-256 values from the GitHub release asset digests.
+
 macOS packaging detail:
 
 - Every Apple slice is wrapped as a framework bundle inside the XCFramework.
@@ -175,6 +177,24 @@ python3 scripts/spm/build_apple_xcframework.py \
   --moltenvk-xcframework /tmp/ncnn-spm/moltenvk/extracted/MoltenVK.xcframework \
   --moltenvk-include-dir /tmp/ncnn-spm/moltenvk/headers-extracted/include
 ```
+
+Build the Vulkan package locally against a development MoltenVK prerelease without editing `packaging.py`:
+
+```bash
+SPMFORGE_MOLTENVK_VERSION=1.4.1-alpha.7 \
+python3 scripts/spm/prepare_moltenvk_dependency.py \
+  --output-dir /tmp/ncnn-spm/moltenvk
+```
+
+Run validation CI against a development MoltenVK prerelease without changing publish behavior:
+
+```bash
+gh workflow run validate-apple-release-pipeline.yml \
+  -f upstream_tag=20260113 \
+  -f moltenvk_version=1.4.1-alpha.7
+```
+
+Only the non-publishing validation workflow accepts `moltenvk_version`. Publish workflows intentionally do not expose this input; publishing uses the pinned exact dependency from `scripts/spm/packaging.py`.
 
 Merge release metadata after building both variants:
 

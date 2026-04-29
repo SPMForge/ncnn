@@ -21,6 +21,29 @@ def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download and stage the MoltenVK framework and headers dependencies.")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--version",
+        help=(
+            "MoltenVK release tag to stage. Defaults to scripts/spm/packaging.py, or "
+            f"${packaging.MOLTENVK_VERSION_ENV} when set."
+        ),
+    )
+    parser.add_argument(
+        "--xcframework-checksum",
+        help=(
+            "Expected SHA-256 for MoltenVK-<version>.xcframework.zip. "
+            "Defaults to the pinned package checksum, the matching environment override, "
+            "or the GitHub release asset digest."
+        ),
+    )
+    parser.add_argument(
+        "--headers-checksum",
+        help=(
+            "Expected SHA-256 for MoltenVKHeaders-<version>.zip. "
+            "Defaults to the pinned package checksum, the matching environment override, "
+            "or the GitHub release asset digest."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -36,6 +59,43 @@ def _download(url: str, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as response, output_path.open("wb") as output_file:
         shutil.copyfileobj(response, output_file)
+
+
+def _github_json(url: str) -> object:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "SPMForge-ncnn-moltenvk-dependency-prep",
+        },
+    )
+    with urllib.request.urlopen(request) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _release_asset_checksum(version: str, asset_name: str) -> str:
+    release_url = f"https://api.github.com/repos/SPMForge/MoltenVK/releases/tags/{version}"
+    payload = _github_json(release_url)
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid MoltenVK release payload for {version}")
+    assets = payload.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError(f"MoltenVK release {version} does not expose assets")
+    for asset in assets:
+        if not isinstance(asset, dict) or asset.get("name") != asset_name:
+            continue
+        digest = asset.get("digest")
+        if isinstance(digest, str) and digest.startswith("sha256:"):
+            return digest.removeprefix("sha256:")
+    raise ValueError(f"MoltenVK release {version} does not expose a SHA-256 digest for {asset_name}")
+
+
+def _resolve_checksum(explicit_checksum: str | None, configured_checksum: str, version: str, asset_name: str) -> str:
+    if explicit_checksum:
+        return explicit_checksum
+    if configured_checksum:
+        return configured_checksum
+    return _release_asset_checksum(version, asset_name)
 
 
 def _download_and_verify(url: str, output_path: Path, expected_checksum: str, label: str) -> None:
@@ -93,22 +153,39 @@ def _write_github_output(path: Path, values: dict[str, str]) -> None:
 def main() -> int:
     arguments = _parse_arguments()
     output_dir = arguments.output_dir.resolve()
-    zip_path = output_dir / f"MoltenVK-{packaging.MOLTENVK_PACKAGE.exact_version}.xcframework.zip"
-    headers_zip_path = output_dir / f"MoltenVKHeaders-{packaging.MOLTENVK_PACKAGE.exact_version}.zip"
+    version = (arguments.version or packaging.MOLTENVK_PACKAGE.exact_version).strip()
+    zip_asset_name = f"MoltenVK-{version}.xcframework.zip"
+    headers_zip_asset_name = f"MoltenVKHeaders-{version}.zip"
+    zip_path = output_dir / zip_asset_name
+    headers_zip_path = output_dir / headers_zip_asset_name
     extract_root = output_dir / "extracted"
     headers_extract_root = output_dir / "headers-extracted"
 
     try:
+        artifact_url = f"https://github.com/SPMForge/MoltenVK/releases/download/{version}/{zip_asset_name}"
+        headers_artifact_url = f"https://github.com/SPMForge/MoltenVK/releases/download/{version}/{headers_zip_asset_name}"
+        artifact_checksum = _resolve_checksum(
+            arguments.xcframework_checksum,
+            packaging.MOLTENVK_ARTIFACT_CHECKSUM if version == packaging.MOLTENVK_PACKAGE.exact_version else "",
+            version,
+            zip_asset_name,
+        )
+        headers_artifact_checksum = _resolve_checksum(
+            arguments.headers_checksum,
+            packaging.MOLTENVK_HEADERS_ARTIFACT_CHECKSUM if version == packaging.MOLTENVK_PACKAGE.exact_version else "",
+            version,
+            headers_zip_asset_name,
+        )
         _download_and_verify(
-            packaging.MOLTENVK_ARTIFACT_URL,
+            artifact_url,
             zip_path,
-            packaging.MOLTENVK_ARTIFACT_CHECKSUM,
+            artifact_checksum,
             "MoltenVK XCFramework",
         )
         _download_and_verify(
-            packaging.MOLTENVK_HEADERS_ARTIFACT_URL,
+            headers_artifact_url,
             headers_zip_path,
-            packaging.MOLTENVK_HEADERS_ARTIFACT_CHECKSUM,
+            headers_artifact_checksum,
             "MoltenVK headers",
         )
 
@@ -121,7 +198,7 @@ def main() -> int:
             "xcframework_path": str(xcframework_path),
             "headers_zip_path": str(headers_zip_path),
             "headers_include_dir": str(headers_include_dir),
-            "version": packaging.MOLTENVK_PACKAGE.exact_version,
+            "version": version,
         }
         if arguments.github_output is not None:
             _write_github_output(arguments.github_output, payload)

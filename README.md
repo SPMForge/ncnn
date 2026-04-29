@@ -47,6 +47,7 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 - New `NCNNVulkan` release builds strong-link `@rpath/MoltenVK.framework/MoltenVK`, and the generated SwiftPM package graph supplies `MoltenVK` through the `SPMForge/MoltenVK` dependency.
 - Vulkan builds consume `MoltenVKHeaders-<version>.zip` as the C/C++ `Vulkan_INCLUDE_DIR`; ncnn packaging must not create app-side loader aliases or repo-local MoltenVK header overlays.
 - Published `NCNNVulkan` public headers must compile for SwiftPM consumers without app-side `Vulkan_INCLUDE_DIR` settings.
+- Development validation can override the staged MoltenVK prerelease with `SPMFORGE_MOLTENVK_VERSION`, `prepare_moltenvk_dependency.py --version`, or the validation workflow `moltenvk_version` input; published manifests should still use an exact MoltenVK dependency.
 - The checked-in `Package.swift` still describes the already-published `1.0.20260113-alpha.5` artifacts; that legacy Vulkan archive weak-links `@rpath/libvulkan.dylib` and must not be relabeled as MoltenVK-backed without a new archive, tag, and checksum.
 - Release gates fail if a newly built `ncnn_vulkan.framework` still links retired `libvulkan` loader install names or if the MoltenVK framework dependency is weak or missing.
 

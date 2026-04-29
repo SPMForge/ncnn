@@ -68,6 +68,51 @@ class PrepareMoltenVKDependencyTests(unittest.TestCase):
             self.assertEqual(payload["headers_include_dir"], str(headers_include_dir))
             self.assertIn(f"headers_include_dir={headers_include_dir}", github_output.read_text())
 
+    def test_stages_explicit_development_version_with_release_asset_digests(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            output_dir = temporary_root / "moltenvk"
+            output_dir.mkdir()
+            version = "1.4.1-alpha.99"
+            framework_zip = output_dir / f"MoltenVK-{version}.xcframework.zip"
+            headers_zip = output_dir / f"MoltenVKHeaders-{version}.zip"
+
+            with zipfile.ZipFile(framework_zip, "w") as archive:
+                archive.writestr("MoltenVK.xcframework/Info.plist", "<plist/>")
+            with zipfile.ZipFile(headers_zip, "w") as archive:
+                archive.writestr("include/vulkan/vulkan.h", "#include <MoltenVK/vulkan/vk_platform.h>\n")
+                archive.writestr("include/MoltenVK/vulkan/vk_platform.h", "// vk_platform\n")
+
+            release_checksums = {
+                framework_zip.name: self._sha256(framework_zip),
+                headers_zip.name: self._sha256(headers_zip),
+            }
+
+            with (
+                mock.patch(
+                    "sys.argv",
+                    [
+                        "prepare_moltenvk_dependency.py",
+                        "--output-dir",
+                        str(output_dir),
+                        "--version",
+                        version,
+                    ],
+                ),
+                mock.patch.object(
+                    prepare_moltenvk_dependency,
+                    "_release_asset_checksum",
+                    side_effect=lambda requested_version, asset_name: release_checksums[asset_name],
+                ) as release_asset_checksum,
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            ):
+                self.assertEqual(prepare_moltenvk_dependency.main(), 0)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["version"], version)
+            self.assertEqual(payload["headers_zip_path"], str(output_dir.resolve() / headers_zip.name))
+            self.assertEqual(release_asset_checksum.call_count, 2)
+
     def test_rejects_incomplete_provider_headers_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             include_root = Path(temporary_directory) / "include"

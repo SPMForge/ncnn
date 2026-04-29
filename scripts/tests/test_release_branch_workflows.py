@@ -44,6 +44,8 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("uses: ./.github/workflows/_publish-upstream-release-core.yml", workflow)
         self.assertIn("release_channel: sync", workflow)
         self.assertIn("publish_to_default_branch: false", workflow)
+        self.assertNotIn("moltenvk_version", workflow)
+        self.assertNotIn("SPMFORGE_MOLTENVK_VERSION", workflow)
         self.assertNotIn("gh release create", workflow)
 
     def test_backfill_workflow_delegates_to_shared_publish_core(self) -> None:
@@ -63,6 +65,8 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
             "publish_to_default_branch: ${{ inputs.release_channel == 'stable' && inputs.publish_to_default_branch }}",
             workflow,
         )
+        self.assertNotIn("moltenvk_version", workflow)
+        self.assertNotIn("SPMFORGE_MOLTENVK_VERSION", workflow)
         self.assertNotIn("publish_to_default_branch: ${{ inputs.release_channel == 'stable' }}", workflow)
         self.assertNotIn("gh release create", workflow)
 
@@ -75,6 +79,8 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertNotIn("schedule:", workflow)
         self.assertIn("release_channel:", workflow)
         self.assertIn("publish_to_default_branch:", workflow)
+        self.assertNotIn("moltenvk_version:", workflow)
+        self.assertNotIn("SPMFORGE_MOLTENVK_VERSION", workflow)
         self.assertIn("publish_to_default_branch is only supported for stable releases.", workflow)
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
         self.assertIn("scripts/spm/release_state.py", workflow)
@@ -192,12 +198,15 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("upstream_tag:", workflow)
+        self.assertIn("moltenvk_version:", workflow)
+        self.assertIn("SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}", workflow)
         self.assertIn("scripts.spm.tests.test_release_flow", workflow)
         self.assertIn("scripts.spm.tests.test_release_state", workflow)
         self.assertIn("scripts/spm/preflight_apple_platforms.py", workflow)
         self.assertIn("scripts/spm/validate_package_contract.py", workflow)
         self.assertIn("scripts/spm/validate_mergeable_xcframework.py", workflow)
         self.assertIn("prepare_moltenvk_dependency.py", build_job)
+        self.assertIn('moltenvk_args+=(--version "$SPMFORGE_MOLTENVK_VERSION")', build_job)
         self.assertIn("--moltenvk-xcframework", build_job)
         self.assertIn("--moltenvk-include-dir", build_job)
         self.assertIn("headers_include_dir", build_job)
@@ -229,6 +238,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("resolve-xcode-version", build_job)
         self.assertIn("preflight-apple-platforms", build_job)
         self.assertIn("ccache-v3", build_job)
+        self.assertIn("pinned-moltenvk", build_job)
         self.assertIn("steps.xcode.outputs.version_key", build_job)
         self.assertIn("hashFiles(", build_job)
         self.assertIn("scripts/spm/build_apple_xcframework.py", build_job)
@@ -246,6 +256,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("overwrite: true", build_job)
         self.assertIn("build-ccache-stats", build_job)
         self.assertIn("Validate generated package contract", package_contract_job)
+        self.assertIn("SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}", package_contract_job)
         self.assertIn("actions/download-artifact@v8", package_contract_job)
         self.assertIn("validate-generated-package-contract", package_contract_job)
         self.assertIn("--release-archive artifacts/ncnn/ncnn-*.xcframework.zip", package_contract_job)

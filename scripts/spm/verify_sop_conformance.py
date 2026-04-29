@@ -78,6 +78,7 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     release_document = read_text(repo_root / "docs" / "how-to-build" / "swiftpm-binary-package.md")
     packaging_script = read_text(repo_root / "scripts" / "spm" / "packaging.py")
     build_script = read_text(repo_root / "scripts" / "spm" / "build_apple_xcframework.py")
+    prepare_moltenvk_script = read_text(repo_root / "scripts" / "spm" / "prepare_moltenvk_dependency.py")
     validate_package_contract_script = read_text(repo_root / "scripts" / "spm" / "validate_package_contract.py")
     package_swift = read_text(repo_root / "Package.swift")
 
@@ -148,6 +149,19 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         "push:" in validate_workflow and "pull_request:" in validate_workflow,
         "validation workflow must run on push and pull_request",
     )
+    require(
+        "moltenvk_version:" in validate_workflow
+        and "SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}" in validate_workflow
+        and 'moltenvk_args+=(--version "$SPMFORGE_MOLTENVK_VERSION")' in validate_workflow,
+        "validation workflow must expose and pass a manual MoltenVK development-version override",
+    )
+    require(
+        "moltenvk_version:" not in core_workflow
+        and "SPMFORGE_MOLTENVK_VERSION" not in core_workflow
+        and "SPMFORGE_MOLTENVK_VERSION" not in sync_workflow
+        and "SPMFORGE_MOLTENVK_VERSION" not in manual_workflow,
+        "publish workflows must not expose MoltenVK development-version overrides",
+    )
     require("actions/cache/restore@v5" in validate_workflow, "validation workflow must use restore-only cache action for ccache")
     require("actions/cache/save@v5" in validate_workflow, "validation workflow must use save-only cache action for ccache")
     require(
@@ -196,6 +210,12 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         "MOLTENVK_HEADERS_ARTIFACT_URL" in packaging_script
         and "MOLTENVK_HEADERS_ARTIFACT_CHECKSUM" in packaging_script,
         "packaging contract must pin the provider-owned MoltenVKHeaders artifact",
+    )
+    require(
+        "SPMFORGE_MOLTENVK_VERSION" in packaging_script
+        and "--version" in prepare_moltenvk_script
+        and "_release_asset_checksum" in prepare_moltenvk_script,
+        "MoltenVK dependency preparation must allow explicit development-version overrides without editing the release contract",
     )
     require(
         "_moltenvk_include_dir_for_platform" not in build_script
