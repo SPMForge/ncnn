@@ -50,7 +50,9 @@ The Vulkan variant additionally uses:
 
 `MoltenVK.framework` is the runtime provider. `MoltenVKHeaders-<version>.zip` is the build-time C/C++ Vulkan include provider. Do not synthesize repo-local `MoltenVK` or `vulkan` include overlays from framework internals during ncnn packaging.
 
-Release builds use the pinned MoltenVK exact dependency recorded by `scripts/spm/moltenvk_dependency.json` so published package manifests are reproducible. The pin only needs `package_name`, `url`, and `version`; artifact checksums are resolved from the GitHub release asset digests during dependency staging unless an operator passes an explicit checksum override. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency.
+Release builds use the pinned MoltenVK exact dependency recorded by `scripts/spm/moltenvk_dependency.json` so published package manifests are reproducible. The pin records `package_name`, `url`, `version`, and provider deployment floors; artifact checksums are resolved from the GitHub release asset digests during dependency staging unless an operator passes an explicit checksum override. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency.
+
+The same pin records MoltenVK's provider deployment floors. Because SwiftPM deployment platforms are declared at the package level rather than per product, this package must not declare an iOS or tvOS floor lower than the pinned MoltenVK package when `NCNNVulkan` pulls `MoltenVK` into the graph through `ncnn_vulkan_runtime_support`. With the current provider pin, the package-level floors are iOS 14.0 and tvOS 14.0. Keeping `NCNN` at iOS 13.0 while publishing `NCNNVulkan` in the same SwiftPM package would require splitting the Vulkan product into a separate package.
 
 macOS packaging detail:
 
@@ -358,6 +360,7 @@ What to verify in CI logs:
 - Validation CI now checks the generated package contract from the same artifact set that produced the XCFramework zips, including a local consumer compile against the final multi-product package; PR validation should not wait until the publishing workflow to discover manifest drift.
 - Apple platform support is preflighted before archive work starts; missing `visionOS`, `watchOS`, or other platform support should fail early with an `xcodebuild -downloadPlatform ...` hint instead of failing at the end of a long archive job.
 - Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
+- The MoltenVK dependency pin records provider deployment floors, and SOP validation fails when package-level SwiftPM floors are lower than the provider package floors.
 - XCFramework validation rejects a flattened macOS framework slice; the macOS bundle must retain its versioned framework layout.
 - XCFramework validation also rejects exported framework headers that still use quoted or non-framework same-header imports.
 - Vulkan XCFramework validation rejects artifacts that drop the strong `@rpath/MoltenVK.framework/MoltenVK` dependency, weak-link it, or retain retired `libvulkan` loader install names.

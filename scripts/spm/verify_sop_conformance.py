@@ -39,6 +39,36 @@ def _load_platform_deployment_targets(repo_root: Path) -> dict[str, str]:
     return {str(key): str(value) for key, value in package_platforms.items()}
 
 
+def _load_moltenvk_minimum_platforms(repo_root: Path) -> dict[str, str]:
+    payload = json.loads(read_text(repo_root / "scripts" / "spm" / "moltenvk_dependency.json"))
+    minimum_platforms = payload.get("minimum_platforms")
+    require(
+        isinstance(minimum_platforms, dict),
+        "MoltenVK dependency pin must record provider minimum platforms",
+    )
+    return {str(key): str(value) for key, value in minimum_platforms.items()}
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(component) for component in version.split("."))
+
+
+def _assert_package_platforms_cover_moltenvk_provider_floor(repo_root: Path) -> None:
+    package_platforms = _load_platform_deployment_targets(repo_root)
+    moltenvk_minimum_platforms = _load_moltenvk_minimum_platforms(repo_root)
+    for platform_key, provider_floor in moltenvk_minimum_platforms.items():
+        package_floor = package_platforms.get(platform_key)
+        require(
+            package_floor is not None,
+            f"package platforms must include MoltenVK provider platform {platform_key}",
+        )
+        require(
+            _version_tuple(package_floor) >= _version_tuple(provider_floor),
+            f"package {platform_key} deployment target {package_floor} must be no lower than "
+            f"MoltenVK provider floor {provider_floor}",
+        )
+
+
 def _assert_no_hardcoded_deployment_targets(repo_root: Path, file_paths: tuple[Path, ...]) -> None:
     deployment_targets = sorted(set(_load_platform_deployment_targets(repo_root).values()))
     for path in file_paths:
@@ -273,6 +303,7 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         repo_root,
         PRODUCTION_SCRIPT_PATHS + PRODUCTION_WORKFLOW_PATHS,
     )
+    _assert_package_platforms_cover_moltenvk_provider_floor(repo_root)
 
     source_acquisition = json.loads(read_text(repo_root / "scripts" / "spm" / "source_acquisition.json"))
     require(

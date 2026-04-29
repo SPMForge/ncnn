@@ -5,10 +5,10 @@ import PackageDescription
 let package = Package(
     name: "ncnn",
     platforms: [
-        .iOS("13.0"),
+        .iOS("14.0"),
         .macOS("11.0"),
         .macCatalyst("13.1"),
-        .tvOS("11.0"),
+        .tvOS("14.0"),
         .watchOS("6.0"),
         .visionOS("1.0"),
     ],

@@ -27,6 +27,10 @@ PLATFORM_METADATA_PATH = REPO_ROOT / "scripts" / "spm" / "platforms.json"
 SMOKE_TEST_PATH = REPO_ROOT / "scripts" / "spm" / "smoke_test_package.py"
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(component) for component in version.split("."))
+
+
 class PrepareMoltenVKDependencyTests(unittest.TestCase):
     def test_stages_framework_and_provider_headers_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -275,6 +279,20 @@ class MoltenVKDependencyConfigTests(unittest.TestCase):
             self.assertEqual(config["version"], "1.4.1-alpha.99")
             self.assertEqual(config["xcframework_checksum"], "")
             self.assertEqual(config["headers_checksum"], "")
+
+    def test_package_platforms_cover_pinned_provider_minimums(self) -> None:
+        pin = json.loads((REPO_ROOT / "scripts" / "spm" / "moltenvk_dependency.json").read_text())
+        minimum_platforms = pin.get("minimum_platforms")
+        self.assertIsInstance(minimum_platforms, dict)
+
+        for platform_key, provider_floor in minimum_platforms.items():
+            with self.subTest(platform_key=platform_key):
+                package_floor = packaging.PACKAGE_PLATFORM_DEPLOYMENT_TARGETS[platform_key]
+                self.assertGreaterEqual(
+                    _version_tuple(package_floor),
+                    _version_tuple(provider_floor),
+                    f"{platform_key} package floor must cover MoltenVK provider floor",
+                )
 
 
 class PackageVersionTests(unittest.TestCase):
@@ -729,10 +747,10 @@ class RootManifestTests(unittest.TestCase):
             self.assertEqual(
                 platforms,
                 {
-                    "ios": "13.0",
+                    "ios": "14.0",
                     "macos": "11.0",
                     "maccatalyst": "13.1",
-                    "tvos": "11.0",
+                    "tvos": "14.0",
                     "watchos": "6.0",
                     "visionos": "1.0",
                 },
@@ -1283,7 +1301,7 @@ class SopConformanceTests(unittest.TestCase):
             shutil.copy2(PLATFORM_METADATA_PATH, target_dir / "platforms.json")
 
             hardcoded_script = target_dir / "build_apple_xcframework.py"
-            hardcoded_script.write_text('command.append("-DDEPLOYMENT_TARGET=13.0")\n')
+            hardcoded_script.write_text('command.append("-DDEPLOYMENT_TARGET=14.0")\n')
 
             with self.assertRaisesRegex(
                 SystemExit,

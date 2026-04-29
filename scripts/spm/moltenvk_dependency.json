@@ -1,5 +1,11 @@
 {
   "package_name": "MoltenVK",
   "url": "https://github.com/SPMForge/MoltenVK.git",
-  "version": "1.4.1-alpha.7"
+  "version": "1.4.1-alpha.7",
+  "minimum_platforms": {
+    "ios": "14.0",
+    "macos": "11.0",
+    "tvos": "14.0",
+    "xros": "1.0"
+  }
 }
