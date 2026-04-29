@@ -80,6 +80,7 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     build_script = read_text(repo_root / "scripts" / "spm" / "build_apple_xcframework.py")
     prepare_moltenvk_script = read_text(repo_root / "scripts" / "spm" / "prepare_moltenvk_dependency.py")
     validate_package_contract_script = read_text(repo_root / "scripts" / "spm" / "validate_package_contract.py")
+    moltenvk_dependency_config = read_text(repo_root / "scripts" / "spm" / "moltenvk_dependency.json")
     package_swift = read_text(repo_root / "Package.swift")
 
     require("wrapper repository" in readme, "README must describe the repo as a wrapper repository")
@@ -212,10 +213,23 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         "packaging contract must pin the provider-owned MoltenVKHeaders artifact",
     )
     require(
+        "moltenvk_dependency.json" in packaging_script
+        and '"version"' in moltenvk_dependency_config
+        and "optional_fields" in packaging_script,
+        "MoltenVK publish dependency pin must live in scripts/spm/moltenvk_dependency.json and allow omitted checksums",
+    )
+    require(
         "SPMFORGE_MOLTENVK_VERSION" in packaging_script
         and "--version" in prepare_moltenvk_script
+        and "--latest" in prepare_moltenvk_script
+        and "--write-pin" in prepare_moltenvk_script
+        and "DEFAULT_OUTPUT_DIR" in prepare_moltenvk_script
         and "_release_asset_checksum" in prepare_moltenvk_script,
         "MoltenVK dependency preparation must allow explicit development-version overrides without editing the release contract",
+    )
+    require(
+        "prepare_moltenvk_dependency.py --latest --write-pin" in readme,
+        "README must document the one-command MoltenVK pin promotion path",
     )
     require(
         "_moltenvk_include_dir_for_platform" not in build_script

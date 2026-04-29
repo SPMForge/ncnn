@@ -11,6 +11,7 @@ This document describes the SwiftPM binary release flow maintained on the `main`
 - Current mapping rule: upstream tag `YYYYMMDD` becomes package version `1.0.YYYYMMDD`; automated sync starts from `1.0.YYYYMMDD-alpha.1`, reuses the latest alpha tag when the rendered package contract still matches that tagged manifest, and advances to the next `1.0.YYYYMMDD-alpha.N` only when packaging output changes; manual alpha follows the same repair-or-advance rule, and manual stable publishes `1.0.YYYYMMDD`
 - Release metadata file: `scripts/spm/current_release.json`
 - Platform metadata file: `scripts/spm/platforms.json`
+- MoltenVK dependency pin: `scripts/spm/moltenvk_dependency.json`
 - Source acquisition contract: `scripts/spm/source_acquisition.json`
 - Manifest model: release automation regenerates root `Package.swift` from `scripts/spm/current_release.json`; published consumers read a static manifest instead of repo-local sidecar JSON files
 - Checked-in compatibility note: the default-branch `Package.swift` and `scripts/spm/current_release.json` currently describe the already-published `1.0.20260113-alpha.5` artifacts. That historical Vulkan archive uses the retired weak-loader contract and must stay recorded that way until a new archive, tag, and checksum are published by the current release pipeline.
@@ -49,7 +50,7 @@ The Vulkan variant additionally uses:
 
 `MoltenVK.framework` is the runtime provider. `MoltenVKHeaders-<version>.zip` is the build-time C/C++ Vulkan include provider. Do not synthesize repo-local `MoltenVK` or `vulkan` include overlays from framework internals during ncnn packaging.
 
-Release builds use the pinned MoltenVK exact dependency recorded by `scripts/spm/packaging.py` so published package manifests are reproducible. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency. When checksums are not supplied, the prepare script resolves SHA-256 values from the GitHub release asset digests.
+Release builds use the pinned MoltenVK exact dependency recorded by `scripts/spm/moltenvk_dependency.json` so published package manifests are reproducible. The pin only needs `package_name`, `url`, and `version`; artifact checksums are resolved from the GitHub release asset digests during dependency staging unless an operator passes an explicit checksum override. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency.
 
 macOS packaging detail:
 
@@ -181,10 +182,27 @@ python3 scripts/spm/build_apple_xcframework.py \
 Build the Vulkan package locally against a development MoltenVK prerelease without editing `packaging.py`:
 
 ```bash
-SPMFORGE_MOLTENVK_VERSION=1.4.1-alpha.7 \
 python3 scripts/spm/prepare_moltenvk_dependency.py \
-  --output-dir /tmp/ncnn-spm/moltenvk
+  --version 1.4.1-alpha.7
 ```
+
+Promote the latest MoltenVK release with the required framework and headers assets into the repo-local publish pin:
+
+```bash
+python3 scripts/spm/prepare_moltenvk_dependency.py \
+  --latest \
+  --write-pin
+```
+
+Promote an exact MoltenVK prerelease into the repo-local publish pin after validation:
+
+```bash
+python3 scripts/spm/prepare_moltenvk_dependency.py \
+  --version 1.4.1-alpha.7 \
+  --write-pin
+```
+
+Commit the resulting `scripts/spm/moltenvk_dependency.json` version change before running publish workflows. Publish workflows intentionally read only the committed pin and do not accept `moltenvk_version`.
 
 Run validation CI against a development MoltenVK prerelease without changing publish behavior:
 
@@ -194,7 +212,7 @@ gh workflow run validate-apple-release-pipeline.yml \
   -f moltenvk_version=1.4.1-alpha.7
 ```
 
-Only the non-publishing validation workflow accepts `moltenvk_version`. Publish workflows intentionally do not expose this input; publishing uses the pinned exact dependency from `scripts/spm/packaging.py`.
+Only the non-publishing validation workflow accepts `moltenvk_version`. Publish workflows intentionally do not expose this input; publishing uses the pinned exact dependency from `scripts/spm/moltenvk_dependency.json`.
 
 Merge release metadata after building both variants:
 

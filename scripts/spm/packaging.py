@@ -86,23 +86,43 @@ DEFAULT_REPO = "ncnn"
 TOOLCHAIN_FILE = REPO_ROOT / "toolchains" / "ios.toolchain.cmake"
 CURRENT_RELEASE_METADATA_PATH = SCRIPTS_ROOT / "current_release.json"
 PLATFORM_METADATA_PATH = SCRIPTS_ROOT / "platforms.json"
+MOLTENVK_DEPENDENCY_CONFIG_PATH = SCRIPTS_ROOT / "moltenvk_dependency.json"
 PACKAGE_SWIFT_PATH = REPO_ROOT / "Package.swift"
 BUILD_ARTIFACT_METADATA_SCHEMA_VERSION = 2
 MOLTENVK_VERSION_ENV = "SPMFORGE_MOLTENVK_VERSION"
 MOLTENVK_ARTIFACT_CHECKSUM_ENV = "SPMFORGE_MOLTENVK_ARTIFACT_CHECKSUM"
 MOLTENVK_HEADERS_ARTIFACT_CHECKSUM_ENV = "SPMFORGE_MOLTENVK_HEADERS_ARTIFACT_CHECKSUM"
-MOLTENVK_DEFAULT_VERSION = "1.4.1-alpha.6"
-MOLTENVK_DEFAULT_ARTIFACT_CHECKSUM = "1d9cfe2ca16ceb4b18661f42261cdbc832600351a507a026ba860162827ba59f"
-MOLTENVK_DEFAULT_HEADERS_ARTIFACT_CHECKSUM = "7ad5f48b2e3e51d293f4f449f1427f2a59c260f4fa41072e76c60a22b282d60e"
-MOLTENVK_VERSION = os.environ.get(MOLTENVK_VERSION_ENV, "").strip() or MOLTENVK_DEFAULT_VERSION
+
+
+def _load_moltenvk_dependency_config() -> dict[str, str]:
+    payload = json.loads(MOLTENVK_DEPENDENCY_CONFIG_PATH.read_text())
+    required_fields = ("package_name", "url", "version")
+    optional_fields = ("xcframework_checksum", "headers_checksum")
+    result = {}
+    for field_name in required_fields:
+        value = payload.get(field_name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"invalid {field_name} in {MOLTENVK_DEPENDENCY_CONFIG_PATH}")
+        result[field_name] = value
+    for field_name in optional_fields:
+        value = payload.get(field_name, "")
+        if not isinstance(value, str):
+            raise ValueError(f"invalid {field_name} in {MOLTENVK_DEPENDENCY_CONFIG_PATH}")
+        result[field_name] = value
+    return result
+
+
+MOLTENVK_DEPENDENCY_CONFIG = _load_moltenvk_dependency_config()
+MOLTENVK_PINNED_VERSION = MOLTENVK_DEPENDENCY_CONFIG["version"]
+MOLTENVK_VERSION = os.environ.get(MOLTENVK_VERSION_ENV, "").strip() or MOLTENVK_PINNED_VERSION
 MOLTENVK_PACKAGE = SwiftPackageDependency(
-    package_name="MoltenVK",
-    url="https://github.com/SPMForge/MoltenVK.git",
+    package_name=MOLTENVK_DEPENDENCY_CONFIG["package_name"],
+    url=MOLTENVK_DEPENDENCY_CONFIG["url"],
     exact_version=MOLTENVK_VERSION,
 )
 MOLTENVK_PRODUCT = SwiftPackageProductDependency(
     product_name="MoltenVK",
-    package_name="MoltenVK",
+    package_name=MOLTENVK_DEPENDENCY_CONFIG["package_name"],
 )
 MOLTENVK_RUNTIME_SUPPORT_TARGET = RuntimeSupportTarget(
     target_name="ncnn_vulkan_runtime",
@@ -115,7 +135,7 @@ MOLTENVK_ARTIFACT_URL = (
 )
 MOLTENVK_ARTIFACT_CHECKSUM = (
     os.environ.get(MOLTENVK_ARTIFACT_CHECKSUM_ENV, "").strip()
-    or (MOLTENVK_DEFAULT_ARTIFACT_CHECKSUM if MOLTENVK_VERSION == MOLTENVK_DEFAULT_VERSION else "")
+    or (MOLTENVK_DEPENDENCY_CONFIG["xcframework_checksum"] if MOLTENVK_VERSION == MOLTENVK_PINNED_VERSION else "")
 )
 MOLTENVK_HEADERS_ARTIFACT_URL = (
     "https://github.com/SPMForge/MoltenVK/releases/download/"
@@ -123,7 +143,7 @@ MOLTENVK_HEADERS_ARTIFACT_URL = (
 )
 MOLTENVK_HEADERS_ARTIFACT_CHECKSUM = (
     os.environ.get(MOLTENVK_HEADERS_ARTIFACT_CHECKSUM_ENV, "").strip()
-    or (MOLTENVK_DEFAULT_HEADERS_ARTIFACT_CHECKSUM if MOLTENVK_VERSION == MOLTENVK_DEFAULT_VERSION else "")
+    or (MOLTENVK_DEPENDENCY_CONFIG["headers_checksum"] if MOLTENVK_VERSION == MOLTENVK_PINNED_VERSION else "")
 )
 MOLTENVK_STRONG_INSTALL_NAME = "@rpath/MoltenVK.framework/MoltenVK"
 RETIRED_VULKAN_LOADER_INSTALL_NAMES = (

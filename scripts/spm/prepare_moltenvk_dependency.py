@@ -16,17 +16,30 @@ if __package__ in {None, ""}:
 
 from scripts.spm import packaging
 
+DEFAULT_OUTPUT_DIR = packaging.REPO_ROOT / "build" / "spm" / "moltenvk"
+
 
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download and stage the MoltenVK framework and headers dependencies.")
-    parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--github-output", type=Path)
     parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Directory for staged MoltenVK artifacts. Defaults to {DEFAULT_OUTPUT_DIR}.",
+    )
+    parser.add_argument("--github-output", type=Path)
+    version_group = parser.add_mutually_exclusive_group()
+    version_group.add_argument(
         "--version",
         help=(
             "MoltenVK release tag to stage. Defaults to scripts/spm/packaging.py, or "
             f"${packaging.MOLTENVK_VERSION_ENV} when set."
         ),
+    )
+    version_group.add_argument(
+        "--latest",
+        action="store_true",
+        help="Resolve the latest MoltenVK GitHub release that exposes the required framework and headers assets.",
     )
     parser.add_argument(
         "--xcframework-checksum",
@@ -42,6 +55,16 @@ def _parse_arguments() -> argparse.Namespace:
             "Expected SHA-256 for MoltenVKHeaders-<version>.zip. "
             "Defaults to the pinned package checksum, the matching environment override, "
             "or the GitHub release asset digest."
+        ),
+    )
+    parser.add_argument(
+        "--write-pin",
+        nargs="?",
+        const=packaging.MOLTENVK_DEPENDENCY_CONFIG_PATH,
+        type=Path,
+        help=(
+            "Write a repo-local moltenvk_dependency.json pin using the resolved version and checksums. "
+            "Defaults to scripts/spm/moltenvk_dependency.json when no path is provided."
         ),
     )
     return parser.parse_args()
@@ -88,6 +111,31 @@ def _release_asset_checksum(version: str, asset_name: str) -> str:
         if isinstance(digest, str) and digest.startswith("sha256:"):
             return digest.removeprefix("sha256:")
     raise ValueError(f"MoltenVK release {version} does not expose a SHA-256 digest for {asset_name}")
+
+
+def _has_release_assets(release: dict[str, object], tag_name: str) -> bool:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        return False
+    asset_names = {asset.get("name") for asset in assets if isinstance(asset, dict)}
+    return {
+        f"MoltenVK-{tag_name}.xcframework.zip",
+        f"MoltenVKHeaders-{tag_name}.zip",
+    }.issubset(asset_names)
+
+
+def _latest_moltenvk_release_tag() -> str:
+    releases_url = "https://api.github.com/repos/SPMForge/MoltenVK/releases?per_page=30"
+    payload = _github_json(releases_url)
+    if not isinstance(payload, list):
+        raise ValueError("invalid MoltenVK releases payload")
+    for release in payload:
+        if not isinstance(release, dict):
+            continue
+        tag_name = release.get("tag_name")
+        if isinstance(tag_name, str) and tag_name and _has_release_assets(release, tag_name):
+            return tag_name
+    raise ValueError("no MoltenVK release exposes the required framework and headers assets")
 
 
 def _resolve_checksum(explicit_checksum: str | None, configured_checksum: str, version: str, asset_name: str) -> str:
@@ -150,18 +198,31 @@ def _write_github_output(path: Path, values: dict[str, str]) -> None:
             output_file.write(f"{key}={value}\n")
 
 
+def _write_dependency_pin(path: Path, version: str) -> None:
+    payload = {
+        "package_name": packaging.MOLTENVK_PACKAGE.package_name,
+        "url": packaging.MOLTENVK_PACKAGE.url,
+        "version": version,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
 def main() -> int:
     arguments = _parse_arguments()
     output_dir = arguments.output_dir.resolve()
-    version = (arguments.version or packaging.MOLTENVK_PACKAGE.exact_version).strip()
-    zip_asset_name = f"MoltenVK-{version}.xcframework.zip"
-    headers_zip_asset_name = f"MoltenVKHeaders-{version}.zip"
-    zip_path = output_dir / zip_asset_name
-    headers_zip_path = output_dir / headers_zip_asset_name
-    extract_root = output_dir / "extracted"
-    headers_extract_root = output_dir / "headers-extracted"
 
     try:
+        if arguments.latest:
+            version = _latest_moltenvk_release_tag()
+        else:
+            version = (arguments.version or packaging.MOLTENVK_PACKAGE.exact_version).strip()
+        zip_asset_name = f"MoltenVK-{version}.xcframework.zip"
+        headers_zip_asset_name = f"MoltenVKHeaders-{version}.zip"
+        zip_path = output_dir / zip_asset_name
+        headers_zip_path = output_dir / headers_zip_asset_name
+        extract_root = output_dir / "extracted"
+        headers_extract_root = output_dir / "headers-extracted"
         artifact_url = f"https://github.com/SPMForge/MoltenVK/releases/download/{version}/{zip_asset_name}"
         headers_artifact_url = f"https://github.com/SPMForge/MoltenVK/releases/download/{version}/{headers_zip_asset_name}"
         artifact_checksum = _resolve_checksum(
@@ -194,14 +255,21 @@ def main() -> int:
         xcframework_path = _find_moltenvk_xcframework(extract_root)
         headers_include_dir = _find_moltenvk_headers_include_dir(headers_extract_root)
         payload = {
-            "zip_path": str(zip_path),
-            "xcframework_path": str(xcframework_path),
+            "headers_checksum": headers_artifact_checksum,
             "headers_zip_path": str(headers_zip_path),
             "headers_include_dir": str(headers_include_dir),
             "version": version,
+            "xcframework_checksum": artifact_checksum,
+            "xcframework_path": str(xcframework_path),
+            "zip_path": str(zip_path),
         }
         if arguments.github_output is not None:
             _write_github_output(arguments.github_output, payload)
+        if arguments.write_pin is not None:
+            _write_dependency_pin(
+                arguments.write_pin,
+                version,
+            )
         print(json.dumps(payload, indent=2, sort_keys=True))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(str(error), file=sys.stderr)

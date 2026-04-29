@@ -111,7 +111,112 @@ class PrepareMoltenVKDependencyTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["version"], version)
             self.assertEqual(payload["headers_zip_path"], str(output_dir.resolve() / headers_zip.name))
+            self.assertEqual(payload["xcframework_checksum"], self._sha256(framework_zip))
+            self.assertEqual(payload["headers_checksum"], self._sha256(headers_zip))
             self.assertEqual(release_asset_checksum.call_count, 2)
+
+    def test_writes_repo_local_dependency_pin_without_checksums(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            output_dir = temporary_root / "moltenvk"
+            output_dir.mkdir()
+            version = "1.4.1-alpha.99"
+            framework_zip = output_dir / f"MoltenVK-{version}.xcframework.zip"
+            headers_zip = output_dir / f"MoltenVKHeaders-{version}.zip"
+            pin_path = temporary_root / "moltenvk_dependency.json"
+
+            with zipfile.ZipFile(framework_zip, "w") as archive:
+                archive.writestr("MoltenVK.xcframework/Info.plist", "<plist/>")
+            with zipfile.ZipFile(headers_zip, "w") as archive:
+                archive.writestr("include/vulkan/vulkan.h", "#include <MoltenVK/vulkan/vk_platform.h>\n")
+                archive.writestr("include/MoltenVK/vulkan/vk_platform.h", "// vk_platform\n")
+
+            with (
+                mock.patch(
+                    "sys.argv",
+                    [
+                        "prepare_moltenvk_dependency.py",
+                        "--output-dir",
+                        str(output_dir),
+                        "--version",
+                        version,
+                        "--xcframework-checksum",
+                        self._sha256(framework_zip),
+                        "--headers-checksum",
+                        self._sha256(headers_zip),
+                        "--write-pin",
+                        str(pin_path),
+                    ],
+                ),
+                mock.patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                self.assertEqual(prepare_moltenvk_dependency.main(), 0)
+
+            pin = json.loads(pin_path.read_text())
+            self.assertEqual(pin["version"], version)
+            self.assertEqual(pin["package_name"], "MoltenVK")
+            self.assertEqual(pin["url"], "https://github.com/SPMForge/MoltenVK.git")
+            self.assertNotIn("xcframework_checksum", pin)
+            self.assertNotIn("headers_checksum", pin)
+
+    def test_latest_writes_default_repo_local_dependency_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            output_dir = temporary_root / "moltenvk"
+            output_dir.mkdir()
+            version = "1.4.1-alpha.100"
+            framework_zip = output_dir / f"MoltenVK-{version}.xcframework.zip"
+            headers_zip = output_dir / f"MoltenVKHeaders-{version}.zip"
+            pin_path = temporary_root / "moltenvk_dependency.json"
+
+            with zipfile.ZipFile(framework_zip, "w") as archive:
+                archive.writestr("MoltenVK.xcframework/Info.plist", "<plist/>")
+            with zipfile.ZipFile(headers_zip, "w") as archive:
+                archive.writestr("include/vulkan/vulkan.h", "#include <MoltenVK/vulkan/vk_platform.h>\n")
+                archive.writestr("include/MoltenVK/vulkan/vk_platform.h", "// vk_platform\n")
+
+            releases_payload = [
+                {
+                    "tag_name": "1.4.1-alpha.99",
+                    "assets": [{"name": "MoltenVK-1.4.1-alpha.99.xcframework.zip"}],
+                },
+                {
+                    "tag_name": version,
+                    "assets": [
+                        {"name": framework_zip.name},
+                        {"name": headers_zip.name},
+                    ],
+                },
+            ]
+
+            with (
+                mock.patch.object(prepare_moltenvk_dependency, "DEFAULT_OUTPUT_DIR", output_dir),
+                mock.patch.object(packaging, "MOLTENVK_DEPENDENCY_CONFIG_PATH", pin_path),
+                mock.patch.object(prepare_moltenvk_dependency, "_github_json", return_value=releases_payload),
+                mock.patch(
+                    "sys.argv",
+                    [
+                        "prepare_moltenvk_dependency.py",
+                        "--latest",
+                        "--xcframework-checksum",
+                        self._sha256(framework_zip),
+                        "--headers-checksum",
+                        self._sha256(headers_zip),
+                        "--write-pin",
+                    ],
+                ),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            ):
+                self.assertEqual(prepare_moltenvk_dependency.main(), 0)
+
+            payload = json.loads(stdout.getvalue())
+            pin = json.loads(pin_path.read_text())
+            self.assertEqual(payload["version"], version)
+            self.assertEqual(payload["xcframework_checksum"], self._sha256(framework_zip))
+            self.assertEqual(payload["headers_checksum"], self._sha256(headers_zip))
+            self.assertEqual(pin["version"], version)
+            self.assertNotIn("xcframework_checksum", pin)
+            self.assertNotIn("headers_checksum", pin)
 
     def test_rejects_incomplete_provider_headers_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -128,6 +233,28 @@ class PrepareMoltenVKDependencyTests(unittest.TestCase):
             for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+
+class MoltenVKDependencyConfigTests(unittest.TestCase):
+    def test_accepts_dependency_pin_without_checksums(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pin_path = Path(temporary_directory) / "moltenvk_dependency.json"
+            pin_path.write_text(
+                json.dumps(
+                    {
+                        "package_name": "MoltenVK",
+                        "url": "https://github.com/SPMForge/MoltenVK.git",
+                        "version": "1.4.1-alpha.99",
+                    }
+                )
+            )
+
+            with mock.patch.object(packaging, "MOLTENVK_DEPENDENCY_CONFIG_PATH", pin_path):
+                config = packaging._load_moltenvk_dependency_config()
+
+            self.assertEqual(config["version"], "1.4.1-alpha.99")
+            self.assertEqual(config["xcframework_checksum"], "")
+            self.assertEqual(config["headers_checksum"], "")
 
 
 class PackageVersionTests(unittest.TestCase):
