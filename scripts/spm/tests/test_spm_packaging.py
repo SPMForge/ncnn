@@ -14,6 +14,7 @@ import zipfile
 from scripts.spm import packaging
 from scripts.spm import build_apple_xcframework
 from scripts.spm import preflight_apple_platforms
+from scripts.spm import prepare_moltenvk_dependency
 from scripts.spm import render_package
 from scripts.spm import validate_package_contract
 from scripts.spm import verify_sop_conformance
@@ -24,6 +25,64 @@ PACKAGE_SWIFT_PATH = REPO_ROOT / "Package.swift"
 CURRENT_RELEASE_METADATA_PATH = REPO_ROOT / "scripts" / "spm" / "current_release.json"
 PLATFORM_METADATA_PATH = REPO_ROOT / "scripts" / "spm" / "platforms.json"
 SMOKE_TEST_PATH = REPO_ROOT / "scripts" / "spm" / "smoke_test_package.py"
+
+
+class PrepareMoltenVKDependencyTests(unittest.TestCase):
+    def test_stages_framework_and_provider_headers_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            output_dir = temporary_root / "moltenvk"
+            output_dir.mkdir()
+            framework_zip = output_dir / f"MoltenVK-{packaging.MOLTENVK_PACKAGE.exact_version}.xcframework.zip"
+            headers_zip = output_dir / f"MoltenVKHeaders-{packaging.MOLTENVK_PACKAGE.exact_version}.zip"
+            github_output = temporary_root / "github-output"
+
+            with zipfile.ZipFile(framework_zip, "w") as archive:
+                archive.writestr("MoltenVK.xcframework/Info.plist", "<plist/>")
+            with zipfile.ZipFile(headers_zip, "w") as archive:
+                archive.writestr("include/vulkan/vulkan.h", "#include <MoltenVK/vulkan/vk_platform.h>\n")
+                archive.writestr("include/MoltenVK/vulkan/vk_platform.h", "// vk_platform\n")
+
+            with (
+                mock.patch.object(packaging, "MOLTENVK_ARTIFACT_CHECKSUM", self._sha256(framework_zip)),
+                mock.patch.object(packaging, "MOLTENVK_HEADERS_ARTIFACT_CHECKSUM", self._sha256(headers_zip)),
+                mock.patch(
+                    "sys.argv",
+                    [
+                        "prepare_moltenvk_dependency.py",
+                        "--output-dir",
+                        str(output_dir),
+                        "--github-output",
+                        str(github_output),
+                    ],
+                ),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            ):
+                self.assertEqual(prepare_moltenvk_dependency.main(), 0)
+
+            payload = json.loads(stdout.getvalue())
+            resolved_output_dir = output_dir.resolve()
+            headers_include_dir = resolved_output_dir / "headers-extracted" / "include"
+            self.assertEqual(payload["xcframework_path"], str(resolved_output_dir / "extracted" / "MoltenVK.xcframework"))
+            self.assertEqual(payload["headers_zip_path"], str(resolved_output_dir / headers_zip.name))
+            self.assertEqual(payload["headers_include_dir"], str(headers_include_dir))
+            self.assertIn(f"headers_include_dir={headers_include_dir}", github_output.read_text())
+
+    def test_rejects_incomplete_provider_headers_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            include_root = Path(temporary_directory) / "include"
+            (include_root / "vulkan").mkdir(parents=True)
+            (include_root / "vulkan" / "vulkan.h").write_text("// missing MoltenVK self-include surface\n")
+
+            with self.assertRaisesRegex(ValueError, "expected one MoltenVK headers include directory"):
+                prepare_moltenvk_dependency._find_moltenvk_headers_include_dir(Path(temporary_directory))
+
+    def _sha256(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as input_file:
+            for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
 
 class PackageVersionTests(unittest.TestCase):
@@ -164,7 +223,7 @@ class PackageRenderingTests(unittest.TestCase):
 
         self.assertIn('library(name: "NCNN", targets: ["ncnn"])', package_contents)
         self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
-        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.5")', package_contents)
+        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.6")', package_contents)
         self.assertIn(
             '.binaryTarget(\n'
             '            name: "ncnn",\n'
@@ -249,7 +308,7 @@ class PackageRenderingTests(unittest.TestCase):
             package_contents,
         )
         self.assertIn('library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime"])', package_contents)
-        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.5")', package_contents)
+        self.assertIn('.package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.6")', package_contents)
 
     def test_build_artifact_metadata_payload_uses_schema_and_canonical_variant_fields(self) -> None:
         release = packaging.ReleaseAsset(
@@ -543,6 +602,31 @@ class HeaderStagingTests(unittest.TestCase):
             self.assertIn("#include <ncnn_vulkan/layer.h>", staged_net_header)
             self.assertIn("#include <vector>", staged_net_header)
 
+    def test_vulkan_stage_headers_rewrites_vulkan_sdk_include_to_moltenvk_framework(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            install_dir = temporary_root / "install"
+            headers_root = install_dir / "include" / "ncnn"
+            headers_root.mkdir(parents=True)
+            (headers_root / "platform.h").write_text(
+                "#include <vulkan/vulkan.h>\n"
+                "#include <vector>\n"
+            )
+
+            staged_headers = build_apple_xcframework._stage_headers(
+                install_dir,
+                temporary_root / "staging",
+                "ncnn_vulkan",
+                external_framework_include_rewrites=build_apple_xcframework._external_framework_include_rewrites_for_variant(
+                    packaging.VULKAN_VARIANT
+                ),
+            )
+
+            staged_platform_header = (staged_headers / "platform.h").read_text()
+            self.assertIn("#include <MoltenVK/vulkan/vulkan.h>", staged_platform_header)
+            self.assertNotIn("#include <vulkan/vulkan.h>", staged_platform_header)
+            self.assertIn("#include <vector>", staged_platform_header)
+
 
 class ValidationWorkflowHelperTests(unittest.TestCase):
     def _write_release_archive_fixture(self, root: Path, variant: packaging.Variant, upstream_tag: str) -> Path:
@@ -561,6 +645,35 @@ class ValidationWorkflowHelperTests(unittest.TestCase):
 
     def _archive_checksum(self, archive_path: Path) -> str:
         return hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
+    def test_validate_package_contract_vulkan_consumer_includes_gpu_header(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            release_input = validate_package_contract.ValidationReleaseInput(
+                metadata_path=temporary_root / "ncnn_vulkan.release.json",
+                archive_path=temporary_root / "ncnn-20260113-apple-vulkan.xcframework.zip",
+                build_metadata=packaging.BuildArtifactMetadata(
+                    release_asset=packaging.ReleaseAsset(
+                        variant=packaging.VULKAN_VARIANT,
+                        upstream_tag="20260113",
+                        package_tag="1.0.20260113-alpha.1",
+                        checksum="vulkan-checksum",
+                    ),
+                    artifact_path="/tmp/ncnn-20260113-apple-vulkan.xcframework.zip",
+                ),
+            )
+
+            validate_package_contract._write_consumer_package(
+                consumer_root=temporary_root / "consumer",
+                local_package_root=temporary_root / "local-package",
+                package_name="ncnn",
+                release_input=release_input,
+            )
+
+            main_cpp = (temporary_root / "consumer" / "Smoke" / "main.cpp").read_text()
+            self.assertIn("#include <ncnn_vulkan/net.h>", main_cpp)
+            self.assertIn("#include <ncnn_vulkan/gpu.h>", main_cpp)
+            self.assertIn("ncnn::get_gpu_count()", main_cpp)
 
     def test_validate_package_contract_requires_vulkan_strong_moltenvk_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1030,8 +1143,12 @@ class BuildCommandTests(unittest.TestCase):
             temporary_root = Path(temporary_directory)
             moltenvk_xcframework = temporary_root / "MoltenVK.xcframework"
             framework_root = moltenvk_xcframework / "ios-arm64" / "MoltenVK.framework"
-            headers_root = framework_root / "Headers"
-            headers_root.mkdir(parents=True)
+            moltenvk_include_dir = temporary_root / "MoltenVKHeaders" / "include"
+            (moltenvk_include_dir / "vulkan").mkdir(parents=True)
+            (moltenvk_include_dir / "MoltenVK" / "vulkan").mkdir(parents=True)
+            (moltenvk_include_dir / "vulkan" / "vulkan.h").write_text("#include <MoltenVK/vulkan/vk_platform.h>\n")
+            (moltenvk_include_dir / "MoltenVK" / "vulkan" / "vk_platform.h").write_text("// vk_platform\n")
+            framework_root.mkdir(parents=True)
             (framework_root / "MoltenVK").write_text("binary")
             (moltenvk_xcframework / "Info.plist").write_bytes(
                 plistlib.dumps(
@@ -1052,15 +1169,17 @@ class BuildCommandTests(unittest.TestCase):
                 packaging.VULKAN_VARIANT,
                 packaging.VULKAN_VARIANT.platforms[0],
                 source_root=Path("/tmp/source"),
-                build_dir=Path("/tmp/build"),
+                build_dir=temporary_root / "build",
                 install_dir=Path("/tmp/install"),
                 moltenvk_xcframework=moltenvk_xcframework,
+                moltenvk_include_dir=moltenvk_include_dir,
             )
 
-        self.assertIn("-DNCNN_VULKAN=ON", command)
-        self.assertIn("-DNCNN_SIMPLEVK=OFF", command)
-        self.assertIn(f"-DVulkan_LIBRARY={framework_root / 'MoltenVK'}", command)
-        self.assertIn(f"-DVulkan_INCLUDE_DIR={headers_root}", command)
+            self.assertIn("-DNCNN_VULKAN=ON", command)
+            self.assertIn("-DNCNN_SIMPLEVK=OFF", command)
+            self.assertIn(f"-DVulkan_LIBRARY={framework_root / 'MoltenVK'}", command)
+            self.assertIn(f"-DVulkan_INCLUDE_DIR={moltenvk_include_dir.resolve()}", command)
+            self.assertFalse((temporary_root / "build" / "moltenvk-include").exists())
 
     def test_compiler_cache_environment_uses_wrapper_binaries_when_ccache_available(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

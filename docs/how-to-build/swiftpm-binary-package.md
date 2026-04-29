@@ -45,7 +45,9 @@ The Vulkan variant additionally uses:
 - `NCNN_VULKAN=ON`
 - `NCNN_SIMPLEVK=OFF`
 - `Vulkan_LIBRARY=<MoltenVK.framework binary>`
-- `Vulkan_INCLUDE_DIR=<MoltenVK.framework Headers>`
+- `Vulkan_INCLUDE_DIR=<MoltenVKHeaders extracted include directory>`
+
+`MoltenVK.framework` is the runtime provider. `MoltenVKHeaders-<version>.zip` is the build-time C/C++ Vulkan include provider. Do not synthesize repo-local `MoltenVK` or `vulkan` include overlays from framework internals during ncnn packaging.
 
 macOS packaging detail:
 
@@ -55,6 +57,7 @@ macOS packaging detail:
 - Preserve `Versions/Current`, top-level symlinks, and `Resources/Info.plist`; do not flatten the macOS slice into a bare `.dylib` directory.
 - Public headers and `Modules/module.modulemap` belong inside each framework slice. Do not keep a repo-level header tree as part of the package contract.
 - Same-framework public header imports are rewritten during packaging to use framework-style includes such as `<ncnn/net.h>` or `<ncnn_vulkan/net.h>`.
+- `NCNNVulkan` public headers rewrite external Vulkan SDK includes such as `<vulkan/vulkan.h>` to framework-style provider includes such as `<MoltenVK/vulkan/vulkan.h>` so SwiftPM consumers do not need to add `Vulkan_INCLUDE_DIR`.
 
 The package does not publish standalone `openmp` or `glslang` binary targets.
 
@@ -169,7 +172,8 @@ python3 scripts/spm/build_apple_xcframework.py \
   --upstream-tag 20260113 \
   --source-root /path/to/upstream-source-tree \
   --output-dir /tmp/ncnn-spm \
-  --moltenvk-xcframework /tmp/ncnn-spm/moltenvk/extracted/MoltenVK.xcframework
+  --moltenvk-xcframework /tmp/ncnn-spm/moltenvk/extracted/MoltenVK.xcframework \
+  --moltenvk-include-dir /tmp/ncnn-spm/moltenvk/headers-extracted/include
 ```
 
 Merge release metadata after building both variants:
@@ -321,7 +325,7 @@ What to verify in CI logs:
 
 - The generated binaries are mergeable libraries. Xcode consumers should use `MERGED_BINARY_TYPE=automatic`.
 - The repo-local smoke test validates Debug consumption with `swift build` and Release consumption with `xcodebuild ... MERGED_BINARY_TYPE=automatic`, using framework-style public header imports.
-- The final package-contract gate repeats consumer validation from the aggregated package root, not only from per-variant standalone XCFrameworks.
+- The final package-contract gate repeats consumer validation from the aggregated package root, not only from per-variant standalone XCFrameworks; the `NCNNVulkan` consumer must compile `ncnn_vulkan/gpu.h` without extra Vulkan header search paths.
 - `NCNNVulkan` is a distinct binary target from `NCNN`; do not assume that every Apple platform available in `NCNN` is also available in `NCNNVulkan`.
 - `NCNNVulkan` strong-links the SwiftPM-supplied `MoltenVK.framework`; host packages such as SnowNCNN should not hide loader setup in app-side `dlopen()` code or create `libvulkan` aliases.
 - `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.

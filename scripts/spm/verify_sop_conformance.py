@@ -77,6 +77,8 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     validate_workflow = read_text(workflows_dir / "validate-apple-release-pipeline.yml")
     release_document = read_text(repo_root / "docs" / "how-to-build" / "swiftpm-binary-package.md")
     packaging_script = read_text(repo_root / "scripts" / "spm" / "packaging.py")
+    build_script = read_text(repo_root / "scripts" / "spm" / "build_apple_xcframework.py")
+    validate_package_contract_script = read_text(repo_root / "scripts" / "spm" / "validate_package_contract.py")
     package_swift = read_text(repo_root / "Package.swift")
 
     require("wrapper repository" in readme, "README must describe the repo as a wrapper repository")
@@ -134,6 +136,12 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         and "--forbid-dependency @rpath/libvulkan.1.dylib" in core_workflow,
         "publish core must validate the NCNNVulkan strong MoltenVK dependency and reject retired Vulkan loaders",
     )
+    require(
+        "--moltenvk-xcframework" in core_workflow
+        and "--moltenvk-include-dir" in core_workflow
+        and "headers_include_dir" in core_workflow,
+        "publish core must pass both MoltenVK framework and provider-owned headers inputs to Vulkan builds",
+    )
     require("hashFiles(" in core_workflow, "publish core must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in core_workflow, "publish core must not hardcode DEVELOPER_DIR")
     require(
@@ -170,6 +178,12 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         and "--forbid-dependency @rpath/libvulkan.1.dylib" in validate_workflow,
         "validation workflow must validate the NCNNVulkan strong MoltenVK dependency and reject retired Vulkan loaders",
     )
+    require(
+        "--moltenvk-xcframework" in validate_workflow
+        and "--moltenvk-include-dir" in validate_workflow
+        and "headers_include_dir" in validate_workflow,
+        "validation workflow must pass both MoltenVK framework and provider-owned headers inputs to Vulkan builds",
+    )
     require("hashFiles(" in validate_workflow, "validation workflow must partition ccache by build-script inputs")
     require("DEVELOPER_DIR:" not in validate_workflow, "validation workflow must not hardcode DEVELOPER_DIR")
     require(
@@ -177,6 +191,24 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         and "strong_runtime_dependencies" in packaging_script
         and "forbidden_runtime_dependencies" in packaging_script,
         "packaging contract must record runtime dependency model, strong runtime dependencies, and forbidden runtime dependencies",
+    )
+    require(
+        "MOLTENVK_HEADERS_ARTIFACT_URL" in packaging_script
+        and "MOLTENVK_HEADERS_ARTIFACT_CHECKSUM" in packaging_script,
+        "packaging contract must pin the provider-owned MoltenVKHeaders artifact",
+    )
+    require(
+        "_moltenvk_include_dir_for_platform" not in build_script
+        and "MoltenVKHeaders include directory" in build_script,
+        "Vulkan builds must consume the provider-owned MoltenVKHeaders include directory instead of generating a local overlay",
+    )
+    require(
+        "MoltenVK/vulkan/" in build_script and "vulkan/" in build_script,
+        "Vulkan public headers must rewrite SDK-style Vulkan includes to MoltenVK framework-style includes",
+    )
+    require(
+        "/gpu.h" in validate_package_contract_script and "get_gpu_count" in validate_package_contract_script,
+        "final package-contract validation must compile the NCNNVulkan GPU public header",
     )
     require(
         "Runtime contract record" in release_document

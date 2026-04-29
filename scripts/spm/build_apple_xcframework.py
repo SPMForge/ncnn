@@ -21,6 +21,9 @@ from scripts.spm import validate_mergeable_xcframework
 
 _LOCAL_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^(\s*#\s*(?:include|import)\s+)"([^"]+)"(.*)$')
 _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN = re.compile(r'^(\s*#\s*(?:include|import)\s+)<([^>]+)>(.*)$')
+_VULKAN_PUBLIC_HEADER_INCLUDE_REWRITES = {
+    "vulkan/": "MoltenVK/vulkan/",
+}
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -35,6 +38,11 @@ def _parse_arguments() -> argparse.Namespace:
         "--moltenvk-xcframework",
         type=Path,
         help="Path to MoltenVK.xcframework used to build and strong-link the Vulkan variant.",
+    )
+    parser.add_argument(
+        "--moltenvk-include-dir",
+        type=Path,
+        help="Path to the provider-owned MoltenVKHeaders include directory used as Vulkan_INCLUDE_DIR.",
     )
     parser.add_argument("--skip-smoke-test", action="store_true")
     return parser.parse_args()
@@ -108,6 +116,7 @@ def _cmake_configure_command(
     build_dir: Path,
     install_dir: Path,
     moltenvk_xcframework: Path | None = None,
+    moltenvk_include_dir: Path | None = None,
 ) -> list[str]:
     command = [
         "cmake",
@@ -138,13 +147,16 @@ def _cmake_configure_command(
     if variant is packaging.VULKAN_VARIANT:
         if moltenvk_xcframework is None:
             raise ValueError("MoltenVK.xcframework is required when building ncnn_vulkan")
+        if moltenvk_include_dir is None:
+            raise ValueError("MoltenVKHeaders include directory is required when building ncnn_vulkan")
         moltenvk_framework_path = _moltenvk_framework_path_for_platform(moltenvk_xcframework, platform)
+        validated_include_dir = _validate_moltenvk_include_dir(moltenvk_include_dir)
         command.extend(
             [
                 "-DNCNN_VULKAN=ON",
                 "-DNCNN_SIMPLEVK=OFF",
                 f"-DVulkan_LIBRARY={_framework_binary_path(moltenvk_framework_path)}",
-                f"-DVulkan_INCLUDE_DIR={_framework_active_root(moltenvk_framework_path) / 'Headers'}",
+                f"-DVulkan_INCLUDE_DIR={validated_include_dir}",
             ]
         )
     else:
@@ -199,14 +211,25 @@ def _moltenvk_framework_path_for_platform(moltenvk_xcframework: Path, platform: 
         if not framework_path.is_dir():
             raise FileNotFoundError(f"MoltenVK framework slice is missing: {framework_path}")
         binary_path = _framework_binary_path(framework_path)
-        headers_path = _framework_active_root(framework_path) / "Headers"
         if not binary_path.is_file():
             raise FileNotFoundError(f"MoltenVK framework binary is missing: {binary_path}")
-        if not headers_path.is_dir():
-            raise FileNotFoundError(f"MoltenVK framework headers are missing: {headers_path}")
         return framework_path
 
     raise ValueError(f"MoltenVK XCFramework does not contain required platform {platform.swiftpm_platform}")
+
+
+def _validate_moltenvk_include_dir(moltenvk_include_dir: Path) -> Path:
+    include_dir = moltenvk_include_dir.resolve()
+    if not include_dir.is_dir():
+        raise FileNotFoundError(f"MoltenVKHeaders include directory is missing: {include_dir}")
+    required_headers = (
+        include_dir / "vulkan" / "vulkan.h",
+        include_dir / "MoltenVK" / "vulkan" / "vk_platform.h",
+    )
+    missing_headers = [str(path) for path in required_headers if not path.is_file()]
+    if missing_headers:
+        raise FileNotFoundError(f"MoltenVKHeaders include directory is incomplete: {', '.join(missing_headers)}")
+    return include_dir
 
 
 def _build_command(build_dir: Path) -> list[str]:
@@ -259,7 +282,12 @@ def _ensure_vulkan_sources(source_root: Path) -> None:
         )
 
 
-def _stage_headers(install_dir: Path, output_dir: Path, module_name: str) -> Path:
+def _stage_headers(
+    install_dir: Path,
+    output_dir: Path,
+    module_name: str,
+    external_framework_include_rewrites: dict[str, str] | None = None,
+) -> Path:
     headers_source = install_dir / "include" / "ncnn"
     if not headers_source.exists():
         raise FileNotFoundError(f"public headers not found at {headers_source}")
@@ -277,6 +305,8 @@ def _stage_headers(install_dir: Path, output_dir: Path, module_name: str) -> Pat
 """
     )
     _rewrite_same_framework_header_includes(headers_output, module_name)
+    if external_framework_include_rewrites:
+        _rewrite_external_framework_header_includes(headers_output, external_framework_include_rewrites)
     return headers_output
 
 
@@ -330,6 +360,44 @@ def _rewrite_same_framework_header_includes(headers_root: Path, framework_name: 
 
         if changed:
             header_path.write_text("".join(rewritten_lines))
+
+
+def _rewrite_external_framework_header_includes(headers_root: Path, include_rewrites: dict[str, str]) -> None:
+    for header_path in sorted(headers_root.rglob("*.h")):
+        rewritten_lines: list[str] = []
+        changed = False
+        for line in header_path.read_text().splitlines(keepends=True):
+            stripped_line = line.rstrip("\r\n")
+            line_ending = line[len(stripped_line) :]
+            angle_match = _ANGLE_PUBLIC_HEADER_INCLUDE_PATTERN.match(stripped_line)
+            if angle_match is None:
+                rewritten_lines.append(line)
+                continue
+
+            include_path = angle_match.group(2)
+            rewritten_include_path = include_path
+            for source_prefix, destination_prefix in include_rewrites.items():
+                if include_path.startswith(source_prefix):
+                    rewritten_include_path = destination_prefix + include_path[len(source_prefix) :]
+                    break
+
+            if rewritten_include_path == include_path:
+                rewritten_lines.append(line)
+                continue
+
+            rewritten_lines.append(
+                f"{angle_match.group(1)}<{rewritten_include_path}>{angle_match.group(3)}{line_ending}"
+            )
+            changed = True
+
+        if changed:
+            header_path.write_text("".join(rewritten_lines))
+
+
+def _external_framework_include_rewrites_for_variant(variant: packaging.Variant) -> dict[str, str]:
+    if variant is packaging.VULKAN_VARIANT:
+        return dict(_VULKAN_PUBLIC_HEADER_INCLUDE_REWRITES)
+    return {}
 
 
 def _copy_framework_headers(headers_source: Path, destination_dir: Path) -> None:
@@ -503,6 +571,7 @@ def _build_platform_slice(
     workspace_root: Path,
     environment: dict[str, str],
     moltenvk_xcframework: Path | None = None,
+    moltenvk_include_dir: Path | None = None,
 ) -> tuple[Path, Path]:
     build_dir = workspace_root / "build" / platform.swiftpm_platform
     install_dir = build_dir / "install"
@@ -517,6 +586,7 @@ def _build_platform_slice(
             build_dir,
             install_dir,
             moltenvk_xcframework=moltenvk_xcframework,
+            moltenvk_include_dir=moltenvk_include_dir,
         ),
         env=environment,
     )
@@ -542,9 +612,13 @@ def main() -> int:
         _ensure_vulkan_sources(source_root)
         if arguments.moltenvk_xcframework is None:
             raise SystemExit("--moltenvk-xcframework is required for ncnn_vulkan")
+        if arguments.moltenvk_include_dir is None:
+            raise SystemExit("--moltenvk-include-dir is required for ncnn_vulkan")
         moltenvk_xcframework = arguments.moltenvk_xcframework.resolve()
+        moltenvk_include_dir = arguments.moltenvk_include_dir.resolve()
     else:
         moltenvk_xcframework = None
+        moltenvk_include_dir = None
 
     workspace_root = arguments.output_dir.resolve() / variant.target_name
     if workspace_root.exists():
@@ -564,9 +638,15 @@ def main() -> int:
             workspace_root,
             environment,
             moltenvk_xcframework=moltenvk_xcframework,
+            moltenvk_include_dir=moltenvk_include_dir,
         )
         if headers_path is None:
-            headers_path = _stage_headers(install_dir, staging_root / variant.target_name, variant.module_name)
+            headers_path = _stage_headers(
+                install_dir,
+                staging_root / variant.target_name,
+                variant.module_name,
+                external_framework_include_rewrites=_external_framework_include_rewrites_for_variant(variant),
+            )
         staged_framework = _stage_framework_bundle(
             source_binary=dynamic_library,
             headers_source=headers_path,

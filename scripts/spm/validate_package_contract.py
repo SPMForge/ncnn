@@ -313,7 +313,21 @@ let package = Package(
 )
 """
 
-    main_cpp = f"""#include <{release_input.build_metadata.release_asset.variant.target_name}/net.h>
+    variant = release_input.build_metadata.release_asset.variant
+    if variant is packaging.VULKAN_VARIANT:
+        main_cpp = f"""#include <{variant.target_name}/net.h>
+#include <{variant.target_name}/gpu.h>
+
+int main()
+{{
+    ncnn::Net net;
+    (void)net;
+    int gpu_count = ncnn::get_gpu_count();
+    return gpu_count < 0 ? 2 : 0;
+}}
+"""
+    else:
+        main_cpp = f"""#include <{variant.target_name}/net.h>
 
 int main()
 {{

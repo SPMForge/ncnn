@@ -160,7 +160,10 @@ jobs:
             --output-dir "$RUNNER_TEMP/spm-artifacts"
           )
           if [ "${{ matrix.variant }}" = "ncnn_vulkan" ]; then
-            build_args+=(--moltenvk-xcframework "${{ steps.moltenvk.outputs.xcframework_path }}")
+            build_args+=(
+              --moltenvk-xcframework "${{ steps.moltenvk.outputs.xcframework_path }}"
+              --moltenvk-include-dir "${{ steps.moltenvk.outputs.headers_include_dir }}"
+            )
           fi
           python3 scripts/spm/build_apple_xcframework.py "${build_args[@]}"
 

@@ -90,7 +90,7 @@ BUILD_ARTIFACT_METADATA_SCHEMA_VERSION = 2
 MOLTENVK_PACKAGE = SwiftPackageDependency(
     package_name="MoltenVK",
     url="https://github.com/SPMForge/MoltenVK.git",
-    exact_version="1.4.1-alpha.5",
+    exact_version="1.4.1-alpha.6",
 )
 MOLTENVK_PRODUCT = SwiftPackageProductDependency(
     product_name="MoltenVK",
@@ -105,7 +105,12 @@ MOLTENVK_ARTIFACT_URL = (
     "https://github.com/SPMForge/MoltenVK/releases/download/"
     f"{MOLTENVK_PACKAGE.exact_version}/MoltenVK-{MOLTENVK_PACKAGE.exact_version}.xcframework.zip"
 )
-MOLTENVK_ARTIFACT_CHECKSUM = "a22ca302e2c1eda37645741c77b3fa6744c6b5f08985571a603968d24cc47826"
+MOLTENVK_ARTIFACT_CHECKSUM = "1d9cfe2ca16ceb4b18661f42261cdbc832600351a507a026ba860162827ba59f"
+MOLTENVK_HEADERS_ARTIFACT_URL = (
+    "https://github.com/SPMForge/MoltenVK/releases/download/"
+    f"{MOLTENVK_PACKAGE.exact_version}/MoltenVKHeaders-{MOLTENVK_PACKAGE.exact_version}.zip"
+)
+MOLTENVK_HEADERS_ARTIFACT_CHECKSUM = "7ad5f48b2e3e51d293f4f449f1427f2a59c260f4fa41072e76c60a22b282d60e"
 MOLTENVK_STRONG_INSTALL_NAME = "@rpath/MoltenVK.framework/MoltenVK"
 RETIRED_VULKAN_LOADER_INSTALL_NAMES = (
     "@rpath/libvulkan.dylib",
