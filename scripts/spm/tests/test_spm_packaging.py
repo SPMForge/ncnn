@@ -218,6 +218,26 @@ class PrepareMoltenVKDependencyTests(unittest.TestCase):
             self.assertNotIn("xcframework_checksum", pin)
             self.assertNotIn("headers_checksum", pin)
 
+    def test_github_json_uses_actions_token_when_available(self) -> None:
+        class Response:
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"ok": true}'
+
+        with (
+            mock.patch.dict("os.environ", {"GITHUB_TOKEN": "test-token"}),
+            mock.patch.object(prepare_moltenvk_dependency.urllib.request, "urlopen", return_value=Response()) as urlopen,
+        ):
+            self.assertEqual(prepare_moltenvk_dependency._github_json("https://api.github.com/test"), {"ok": True})
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
+
     def test_rejects_incomplete_provider_headers_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             include_root = Path(temporary_directory) / "include"

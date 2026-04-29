@@ -100,6 +100,7 @@ jobs:
       CCACHE_MAXSIZE: 2G
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
+      GITHUB_TOKEN: ${{ github.token }}
       HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache
     steps:
       - uses: actions/checkout@v6

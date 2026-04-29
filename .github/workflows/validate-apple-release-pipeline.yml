@@ -80,6 +80,7 @@ jobs:
       CCACHE_MAXSIZE: 2G
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
+      GITHUB_TOKEN: ${{ github.token }}
       HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache
       SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
     steps:

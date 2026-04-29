@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -85,12 +86,16 @@ def _download(url: str, output_path: Path) -> None:
 
 
 def _github_json(url: str) -> object:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "SPMForge-ncnn-moltenvk-dependency-prep",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "SPMForge-ncnn-moltenvk-dependency-prep",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(request) as response:
         return json.loads(response.read().decode("utf-8"))

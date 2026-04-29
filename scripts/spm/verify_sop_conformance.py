@@ -224,8 +224,14 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         and "--latest" in prepare_moltenvk_script
         and "--write-pin" in prepare_moltenvk_script
         and "DEFAULT_OUTPUT_DIR" in prepare_moltenvk_script
+        and "Authorization" in prepare_moltenvk_script
         and "_release_asset_checksum" in prepare_moltenvk_script,
         "MoltenVK dependency preparation must allow explicit development-version overrides without editing the release contract",
+    )
+    require(
+        "GITHUB_TOKEN: ${{ github.token }}" in core_workflow
+        and "GITHUB_TOKEN: ${{ github.token }}" in validate_workflow,
+        "MoltenVK digest resolution must use the GitHub Actions token instead of anonymous release API requests",
     )
     require(
         "prepare_moltenvk_dependency.py --latest --write-pin" in readme,
