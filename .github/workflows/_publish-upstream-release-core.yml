@@ -424,35 +424,7 @@ jobs:
             exit 0
           fi
 
-          release_branch="release/${{ steps.publication_plan.outputs.final_package_tag }}"
-          if git ls-remote --exit-code --heads origin "refs/heads/${release_branch}" >/dev/null 2>&1; then
-            existing_release_branch_package="$RUNNER_TEMP/existing-release-branch-package.swift"
-            existing_release_branch_json="$RUNNER_TEMP/existing-release-branch-current-release.json"
-            git fetch origin "refs/heads/${release_branch}:refs/remotes/origin/${release_branch}"
-            if ! git show "refs/remotes/origin/${release_branch}:Package.swift" >"$existing_release_branch_package" 2>/dev/null; then
-              echo "release branch already exists without Package.swift: ${release_branch}" >&2
-              exit 1
-            fi
-            if ! git show "refs/remotes/origin/${release_branch}:scripts/spm/current_release.json" >"$existing_release_branch_json" 2>/dev/null; then
-              echo "release branch already exists without scripts/spm/current_release.json: ${release_branch}" >&2
-              exit 1
-            fi
-            if ! cmp -s "$existing_release_branch_package" Package.swift; then
-              echo "release branch already exists with a different Package.swift: ${release_branch}" >&2
-              exit 1
-            fi
-            if ! cmp -s "$existing_release_branch_json" scripts/spm/current_release.json; then
-              echo "release branch already exists with a different scripts/spm/current_release.json: ${release_branch}" >&2
-              exit 1
-            fi
-            commit_sha="$(git rev-parse "refs/remotes/origin/${release_branch}^{commit}")"
-            git tag "${{ steps.publication_plan.outputs.final_package_tag }}" "${commit_sha}"
-            git push origin "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}"
-            echo "release_commit=${commit_sha}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git switch --create "${release_branch}"
+          git switch --detach
           git add Package.swift
           git add scripts/spm/current_release.json
           if ! git diff --cached --quiet; then
@@ -460,7 +432,6 @@ jobs:
           fi
 
           commit_sha="$(git rev-parse HEAD)"
-          git push origin "HEAD:refs/heads/${release_branch}"
           git tag "${{ steps.publication_plan.outputs.final_package_tag }}" "${commit_sha}"
           git push origin "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}"
           echo "release_commit=${commit_sha}" >> "$GITHUB_OUTPUT"
@@ -479,7 +450,7 @@ jobs:
           - Package tag: ${{ steps.publication_plan.outputs.final_package_tag }}
           - Release channel: ${channel_label}
           - Source acquisition: repo-local source acquisition contract with exported upstream snapshot
-          - Release ref model: alpha tags point at release/${{ steps.publication_plan.outputs.final_package_tag }} commits and do not update the default branch
+          - Release ref model: package tags point directly at immutable generated metadata commits; alpha paths do not update the default branch or publish release branches
           - Products: NCNN, NCNNVulkan
           - Vulkan caveat: Mac Catalyst, watchOS, and watchOS Simulator are intentionally excluded because the MoltenVK package dependency does not provide those slices
           - Vulkan runtime contract: NCNNVulkan strong-links @rpath/MoltenVK.framework/MoltenVK; SwiftPM supplies MoltenVK through the MoltenVK package dependency

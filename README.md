@@ -39,10 +39,10 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 - Release builds fetch upstream tags into `refs/upstream-tags/*`.
 - Release and validation jobs export the requested upstream snapshot before building.
 - Stable package tags require explicit manual intent.
-- Alpha releases publish from `release/<package_tag>` commits so the tagged checkout carries the generated metadata without forcing those commits onto the default branch.
+- Alpha package tags point directly at immutable generated metadata commits so the tagged checkout carries the generated metadata without forcing those commits onto the default branch.
 - Scheduled alpha publishes reuse the latest alpha tag when the rendered package contract still matches that tagged manifest, and advance to the next `X.Y.Z-alpha.N` only when packaging output changes. Manual alpha publishes use the same repair-or-advance rule.
 - Stable promotions may update the default branch only when the manual workflow operator explicitly enables `publish_to_default_branch`; alpha paths never write the default branch.
-- If `release/<package_tag>` already exists but the tag or GitHub Release is incomplete, reruns reuse the matching release-branch commit; a mismatched generated `Package.swift` or `scripts/spm/current_release.json` fails loudly.
+- If a package tag already exists but the GitHub Release is incomplete, reruns verify the tagged `Package.swift` and `scripts/spm/current_release.json` before repairing assets or release metadata. Historical `release/*` branches are ignored by new alpha publishes.
 - `Package.swift` should not be hand-edited for releases; the release pipeline regenerates it from `scripts/spm/current_release.json`.
 - New `NCNNVulkan` release builds strong-link `@rpath/MoltenVK.framework/MoltenVK`, and the generated SwiftPM package graph supplies `MoltenVK` through the `SPMForge/MoltenVK` dependency.
 - Vulkan builds consume `MoltenVKHeaders-<version>.zip` as the C/C++ `Vulkan_INCLUDE_DIR`; ncnn packaging must not create app-side loader aliases or repo-local MoltenVK header overlays.

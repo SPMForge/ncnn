@@ -85,7 +85,10 @@ def main(repo_root: Path = REPO_ROOT) -> int:
 
     require("wrapper repository" in readme, "README must describe the repo as a wrapper repository")
     require("refs/upstream-tags/*" in readme, "README must document refs/upstream-tags/*")
-    require("Alpha releases publish from `release/" in readme, "README must document alpha release branches")
+    require(
+        "Alpha package tags point directly at immutable generated metadata commits" in readme,
+        "README must document tag-only alpha release metadata commits",
+    )
     require("Stable promotions may update the default branch" in readme, "README must document stable default-branch updates")
     require("workflow_call:" in core_workflow, "publish core must be reusable via workflow_call")
     require("publish_to_default_branch:" in core_workflow, "publish core must make default-branch updates explicit")
@@ -108,7 +111,15 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     require("gh release upload" in core_workflow, "publish core must support repair uploads")
     require("gh api --method PATCH" in core_workflow, "publish core must normalize release metadata")
     require("select-publication-tag" in core_workflow, "publish core must resolve final alpha tags from rendered manifests")
-    require("release/" in core_workflow, "publish core must create release/<package_tag> refs for generated metadata commits")
+    require("git switch --detach" in core_workflow, "publish core must create generated metadata commits off the default branch")
+    require(
+        'git push origin "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}"' in core_workflow,
+        "publish core must publish package tags for generated metadata commits",
+    )
+    require(
+        'HEAD:refs/heads/' not in core_workflow and "release/<package_tag>" not in core_workflow,
+        "publish core must not publish release/<package_tag> branches as part of the alpha release contract",
+    )
     require("actions/cache/restore@v5" in core_workflow, "publish core must use restore-only cache action for ccache")
     require("actions/cache/save@v5" in core_workflow, "publish core must use save-only cache action for ccache")
     require(

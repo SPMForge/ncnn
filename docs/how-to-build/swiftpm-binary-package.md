@@ -102,7 +102,7 @@ Two GitHub Actions workflows drive the package lifecycle:
   - Publishes the initial alpha prerelease for a new upstream tag as `X.Y.Z-alpha.1`
   - Reuses the latest alpha tag when both the rendered `Package.swift` and `scripts/spm/current_release.json` still match that tagged release commit
   - Advances to the next `X.Y.Z-alpha.N` when either generated package metadata file differs from the latest alpha tag
-  - Alpha publishes write the generated metadata onto a dedicated `release/<package_tag>` commit and do not update the default branch
+  - Alpha publishes create tag-only immutable generated metadata commits, do not update the default branch, and must not publish `release/<package_tag>` branches
   - Optional manual rerun
 - `.github/workflows/publish-upstream-release-manually.yml`
   - Manual publish for a specific upstream tag
@@ -128,8 +128,8 @@ Each workflow:
 6. Validates `MergeableMetadata`, binary paths, required platforms, and `vtool` platform identity
 7. Validates the generated package contract from the same fresh build metadata with `scripts/spm/validate_package_contract.py` or `swift package dump-package`
 8. Renders `scripts/spm/current_release.json` and `Package.swift` for the final package tag
-9. Creates or reuses a `release/<package_tag>` commit so the tag checkout contains the generated metadata
-10. Publishes the release assets from GitHub Releases; alpha paths do not update the default branch, while stable promotion may update the default branch with the tagged commit only when `publish_to_default_branch` is explicitly enabled
+9. Creates or reuses a package tag that points directly at the immutable generated metadata commit, so the tag checkout contains the generated metadata
+10. Publishes the release assets from GitHub Releases; alpha paths do not update the default branch or publish release branches, while stable promotion may update the default branch with the tagged commit only when `publish_to_default_branch` is explicitly enabled
 
 ## Local Maintenance Commands
 
@@ -372,6 +372,6 @@ What to verify in CI logs:
 - `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
 - Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.
 - Automated SwiftPM package tags are always GitHub prereleases in the alpha channel.
-- Alpha release commits do not update the default branch; they are tagged from `release/<package_tag>` so the alpha checkout still contains the generated metadata.
+- Alpha release commits do not update the default branch. Alpha package tags point directly at immutable generated metadata commits so the alpha checkout still contains the generated metadata.
 - Manual publishing must explicitly choose `alpha` or `stable`; stable default-branch writes additionally require the boolean `publish_to_default_branch` operator choice. Repeated packaging fixes for the same upstream snapshot must advance `N`; stable promotion must publish the exact stable package tag once, not mutate an existing alpha release.
-- If `release/<package_tag>` already exists but the package tag or GitHub Release was not completed, reruns reuse the matching release-branch commit. If the branch commit does not match the freshly generated `Package.swift` and `scripts/spm/current_release.json`, the workflow fails loudly instead of overwriting it.
+- If the package tag already exists but the GitHub Release was not completed, reruns verify the tagged `Package.swift` and `scripts/spm/current_release.json` before repairing release assets or metadata. Historical `release/*` branches are ignored by new alpha publishes and are not part of the release contract.
