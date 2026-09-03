@@ -145,7 +145,7 @@ jobs:
       - name: install-ccache
         run: |
           if ! command -v ccache >/dev/null 2>&1; then
-            brew install ccache
+            brew install ccache || true
           fi
           ccache --version
 
