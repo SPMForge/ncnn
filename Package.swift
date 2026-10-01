@@ -14,18 +14,28 @@ let package = Package(
     ],
     products: [
         .library(name: "NCNN", targets: ["ncnn"]),
-        .library(name: "NCNNVulkan", targets: ["ncnn_vulkan"]),
+        .library(name: "NCNNVulkan", targets: ["ncnn_vulkan", "ncnn_vulkan_runtime_support"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/SPMForge/MoltenVK.git", exact: "1.4.1-alpha.7"),
     ],
     targets: [
         .binaryTarget(
             name: "ncnn",
-            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple.xcframework.zip",
-            checksum: "1ee69cb9e83b59fe69afe374becd0d2b94292edbc1eff9d91cb7a5cf5f84ef6a"
+            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260526-alpha.115/ncnn-20260526-apple.xcframework.zip",
+            checksum: "9ad8baaf282b70f7038fb353abf29b06cfa40bb47a07b04b80c598971c2ca2b2"
         ),
         .binaryTarget(
             name: "ncnn_vulkan",
-            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260113-alpha.5/ncnn-20260113-apple-vulkan.xcframework.zip",
-            checksum: "c427c1f8e5979e429203d09cecd5c83fe2538693744ab4ca297a81d7debde213"
+            url: "https://github.com/SPMForge/ncnn/releases/download/1.0.20260526-alpha.115/ncnn-20260526-apple-vulkan.xcframework.zip",
+            checksum: "ecf3a86d12dd7b611849446c33b5f928d14307d350d757438fbe63d6bfd5a0e1"
+        ),
+        .target(
+            name: "ncnn_vulkan_runtime_support",
+            dependencies: [
+                .product(name: "MoltenVK", package: "MoltenVK"),
+            ],
+            path: "Sources/ncnn_vulkan_runtime_support"
         ),
     ]
 )
