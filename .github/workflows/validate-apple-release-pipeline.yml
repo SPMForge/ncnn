@@ -68,6 +68,7 @@ jobs:
     name: Build and validate Apple artifacts (${{ matrix.variant }})
     needs: verify
     strategy:
+      fail-fast: false
       matrix:
         include:
           - variant: ncnn
@@ -227,7 +228,24 @@ jobs:
             "${validation_args[@]}"
 
       - name: upload-validation-artifacts
+        id: upload_validation_artifacts
         if: always()
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
+          if-no-files-found: ignore
+          overwrite: true
+
+      - name: retry-upload-validation-artifacts-backoff
+        if: ${{ !cancelled() && steps.upload_validation_artifacts.outcome == 'failure' }}
+        run: sleep 10
+
+      - name: retry-upload-validation-artifacts
+        if: ${{ !cancelled() && steps.upload_validation_artifacts.outcome == 'failure' }}
         uses: actions/upload-artifact@v7
         with:
           name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
@@ -254,12 +272,42 @@ jobs:
           fetch-depth: 0
 
       - name: download-cpu-artifacts
+        id: download_cpu_artifacts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: apple-xcframework-validation-ncnn-${{ github.run_id }}
+          path: artifacts/ncnn
+
+      - name: retry-download-cpu-artifacts-backoff
+        if: steps.download_cpu_artifacts.outcome == 'failure'
+        run: |
+          rm -rf artifacts/ncnn
+          sleep 10
+
+      - name: retry-download-cpu-artifacts
+        if: steps.download_cpu_artifacts.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           name: apple-xcframework-validation-ncnn-${{ github.run_id }}
           path: artifacts/ncnn
 
       - name: download-vulkan-artifacts
+        id: download_vulkan_artifacts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: apple-xcframework-validation-ncnn_vulkan-${{ github.run_id }}
+          path: artifacts/ncnn_vulkan
+
+      - name: retry-download-vulkan-artifacts-backoff
+        if: steps.download_vulkan_artifacts.outcome == 'failure'
+        run: |
+          rm -rf artifacts/ncnn_vulkan
+          sleep 10
+
+      - name: retry-download-vulkan-artifacts
+        if: steps.download_vulkan_artifacts.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           name: apple-xcframework-validation-ncnn_vulkan-${{ github.run_id }}

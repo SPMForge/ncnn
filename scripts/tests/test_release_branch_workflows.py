@@ -186,6 +186,10 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
             "${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json",
             build_job,
         )
+        self.assertIn("fail-fast: false", build_job)
+        self.assertIn("retry-upload-artifacts", build_job)
+        self.assertIn("retry-download-cpu-artifacts", release_job)
+        self.assertIn("retry-download-vulkan-artifacts", release_job)
         self.assertIn("overwrite: true", build_job)
         self.assertIn("build-ccache-stats", build_job)
         self.assertIn("--release-archive artifacts/ncnn/ncnn-*.xcframework.zip", workflow)
@@ -261,12 +265,16 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
             "${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json",
             build_job,
         )
+        self.assertIn("fail-fast: false", build_job)
         self.assertIn("actions/upload-artifact@v7", build_job)
+        self.assertIn("retry-upload-validation-artifacts", build_job)
         self.assertIn("overwrite: true", build_job)
         self.assertIn("build-ccache-stats", build_job)
         self.assertIn("Validate generated package contract", package_contract_job)
         self.assertIn("SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}", package_contract_job)
         self.assertIn("actions/download-artifact@v8", package_contract_job)
+        self.assertIn("retry-download-cpu-artifacts", package_contract_job)
+        self.assertIn("retry-download-vulkan-artifacts", package_contract_job)
         self.assertIn("validate-generated-package-contract", package_contract_job)
         self.assertIn("--release-archive artifacts/ncnn/ncnn-*.xcframework.zip", package_contract_job)
         self.assertIn("--release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip", package_contract_job)
