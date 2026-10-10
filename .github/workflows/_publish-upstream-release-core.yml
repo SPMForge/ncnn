@@ -88,6 +88,7 @@ jobs:
       - verify
       - resolve
     strategy:
+      fail-fast: false
       matrix:
         include:
           - variant: ncnn
@@ -239,6 +240,22 @@ jobs:
             "${validation_args[@]}"
 
       - name: upload-artifacts
+        id: upload_artifacts
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.variant }}
+          path: |
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
+          overwrite: true
+
+      - name: retry-upload-artifacts-backoff
+        if: steps.upload_artifacts.outcome == 'failure'
+        run: sleep 10
+
+      - name: retry-upload-artifacts
+        if: steps.upload_artifacts.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.variant }}
@@ -268,12 +285,42 @@ jobs:
           git fetch origin 'refs/tags/*:refs/tags/*'
 
       - name: download-cpu-artifacts
+        id: download_cpu_artifacts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: ${{ inputs.artifact_prefix }}-ncnn
+          path: artifacts/ncnn
+
+      - name: retry-download-cpu-artifacts-backoff
+        if: steps.download_cpu_artifacts.outcome == 'failure'
+        run: |
+          rm -rf artifacts/ncnn
+          sleep 10
+
+      - name: retry-download-cpu-artifacts
+        if: steps.download_cpu_artifacts.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_prefix }}-ncnn
           path: artifacts/ncnn
 
       - name: download-vulkan-artifacts
+        id: download_vulkan_artifacts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: ${{ inputs.artifact_prefix }}-ncnn_vulkan
+          path: artifacts/ncnn_vulkan
+
+      - name: retry-download-vulkan-artifacts-backoff
+        if: steps.download_vulkan_artifacts.outcome == 'failure'
+        run: |
+          rm -rf artifacts/ncnn_vulkan
+          sleep 10
+
+      - name: retry-download-vulkan-artifacts
+        if: steps.download_vulkan_artifacts.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_prefix }}-ncnn_vulkan
