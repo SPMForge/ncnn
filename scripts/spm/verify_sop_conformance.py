@@ -69,6 +69,26 @@ def _assert_package_platforms_cover_moltenvk_provider_floor(repo_root: Path) -> 
         )
 
 
+def _assert_license_conformance(repo_root: Path) -> None:
+    license_txt_path = repo_root / "LICENSE.txt"
+    license_path = repo_root / "LICENSE"
+    require(license_txt_path.exists(), "ncnn must include root LICENSE.txt file")
+    require(license_path.exists(), "ncnn must include root LICENSE file or symlink")
+    require(license_path.is_symlink() and license_path.readlink() == Path("LICENSE.txt"), "ncnn root LICENSE must be a relative symlink to LICENSE.txt")
+    license_txt = read_text(license_txt_path)
+    license_content = read_text(license_path)
+    require("BSD 3-Clause" in license_txt or "BSD" in license_txt, "LICENSE.txt must contain BSD license text")
+    require("BSD 3-Clause" in license_content or "BSD" in license_content, "LICENSE must resolve to BSD license text")
+
+    readme = read_text(repo_root / "README.md")
+    require("## License" in readme, "README must contain ## License section")
+    require("BSD 3-Clause License" in readme, "README must disclose BSD 3-Clause License")
+
+    build_script = read_text(repo_root / "scripts" / "spm" / "build_apple_xcframework.py")
+    require('license_target = info_plist_path.parent / "LICENSE.txt"' in build_script, "build script must stage LICENSE.txt in macOS framework Resources")
+    require('xcframework_path / "LICENSE.txt"' in build_script, "build script must stage LICENSE.txt in XCFramework root")
+
+
 def _assert_no_hardcoded_deployment_targets(repo_root: Path, file_paths: tuple[Path, ...]) -> None:
     deployment_targets = sorted(set(_load_platform_deployment_targets(repo_root).values()))
     for path in file_paths:
@@ -312,6 +332,7 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     )
     require((repo_root / "scripts" / "spm" / "platforms.json").exists(), "platform metadata must exist")
     require((repo_root / "scripts" / "spm" / "current_release.json").exists(), "release metadata must exist")
+    _assert_license_conformance(repo_root)
 
     print("ncnn SOP conformance verified")
     return 0

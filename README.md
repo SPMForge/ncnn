@@ -55,3 +55,9 @@ It does not carry the upstream source tree, upstream build matrix, or upstream c
 ## Documentation
 
 - Wrapper package contract and workflow guide: [docs/how-to-build/swiftpm-binary-package.md](docs/how-to-build/swiftpm-binary-package.md)
+
+## License
+
+This repository and its distributed binary frameworks are licensed under the **BSD 3-Clause License** (see [LICENSE.txt](LICENSE.txt)), identical to upstream [`Tencent/ncnn`](https://github.com/Tencent/ncnn).
+
+Third-party dependencies and math routines bundled within upstream ncnn are subject to their respective licenses as detailed in `LICENSE.txt` (including the zlib License and BSD-2-Clause).

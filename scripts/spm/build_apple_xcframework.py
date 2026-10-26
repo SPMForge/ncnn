@@ -478,6 +478,12 @@ def _stage_framework_bundle(
     _write_framework_module_map(modules_path / "module.modulemap", module_name)
     _write_framework_info_plist(info_plist_path, bundle_name)
 
+    repo_root = Path(__file__).resolve().parents[2]
+    license_source = repo_root / "LICENSE.txt" if (repo_root / "LICENSE.txt").exists() else repo_root / "LICENSE"
+    if license_source.exists():
+        license_target = info_plist_path.parent / "LICENSE.txt" if platform.swiftpm_platform == "macos" else framework_root / "LICENSE.txt"
+        shutil.copy2(license_source, license_target)
+
     if platform.swiftpm_platform == "macos":
         versions_dir = framework_root / "Versions"
         (versions_dir / "Current").symlink_to("A")
@@ -506,6 +512,12 @@ def _create_xcframework(
         command.extend(["-framework", str(staged_framework)])
     command.extend(["-output", str(xcframework_path)])
     _run(command, env=environment)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    license_source = repo_root / "LICENSE.txt" if (repo_root / "LICENSE.txt").exists() else repo_root / "LICENSE"
+    if license_source.exists() and xcframework_path.exists():
+        shutil.copy2(license_source, xcframework_path / "LICENSE.txt")
+
     return xcframework_path
 
 
