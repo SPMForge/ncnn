@@ -226,7 +226,7 @@ class ReleaseBranchWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/spm/source_acquisition.py fetch-tags", workflow)
         self.assertIn("--explicit-tag \"${{ inputs.upstream_tag }}\"", workflow)
         self.assertIn("package_tag: ${{ steps.resolve.outputs.package_tag }}", workflow)
-        self.assertIn('--package-tag "${{ needs.verify.outputs.package_tag }}"', workflow)
+        self.assertIn('--package-tag "${{ needs.resolve.outputs.package_tag }}"', workflow)
         self.assertIn("runs-on: macos-15", build_job)
         self.assertNotIn("runs-on: macos-15-intel", build_job)
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", build_job)

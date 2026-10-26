@@ -1,10 +1,9 @@
 name: validate-apple-release-pipeline
-
-on:
+'on':
   push:
     branches:
       - main
-  pull_request:
+  pull_request: null
   workflow_dispatch:
     inputs:
       upstream_tag:
@@ -13,42 +12,40 @@ on:
       moltenvk_version:
         description: Optional MoltenVK prerelease tag for development validation only, such as 1.4.1-alpha.7.
         required: false
-
 permissions:
   contents: read
-
 concurrency:
   group: validate-apple-release-pipeline-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
   verify:
-    name: Validate release pipeline
+    name: Verify
     runs-on: ubuntu-latest
-    outputs:
-      package_tag: ${{ steps.resolve.outputs.package_tag }}
-      upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: run-packaging-unit-tests
         run: |
           python3 -m unittest discover -s tests -p "test_*.py"
-
       - name: verify-sop-conformance
         run: |
           python3 scripts/verify_sop_conformance.py
-
       - name: validate-workflow-yaml
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |path| YAML.load_file(path) }; puts "workflow-yaml-ok"'
-
+  resolve:
+    name: Resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: fetch-upstream-tags
         run: |
           python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
-
       - name: resolve-upstream-tag
         id: resolve
         run: |
@@ -57,39 +54,40 @@ jobs:
             select_args+=(--explicit-tag "${{ inputs.upstream_tag }}")
           fi
           python3 scripts/spm/select_upstream_tag.py "${select_args[@]}"
-
-  build:
-    name: Build and validate Apple artifacts (${{ matrix.variant }})
+      - name: Capture immutable source identity
+        id: release_inputs
+        run: python3 scripts/release_inputs.py capture --upstream-tag "${{ steps.resolve.outputs.upstream_tag }}" --github-output "$GITHUB_OUTPUT"
     needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: ncnn
-            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
-          - variant: ncnn_vulkan
-            required_platforms: ios ios-simulator macos tvos tvos-simulator xros xros-simulator
-    runs-on: macos-15
+    outputs:
+      package_tag: ${{ steps.resolve.outputs.package_tag }}
+      upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
+      upstream_commit: ${{ steps.release_inputs.outputs.upstream_commit }}
+  build:
     env:
+      CCACHE_COMPILERCHECK: content
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
-      CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
       GITHUB_TOKEN: ${{ github.token }}
       SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
+      SPMFORGE_EXPECTED_UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
+      SPMFORGE_DEFER_CONSUMERS: "1"
+    name: Build (${{ matrix.variant }})
+    needs:
+      - verify
+      - resolve
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: resolve-xcode-version
-        id: xcode
+      - id: xcode
+        name: resolve-xcode-version
         run: |
           xcode_version="$(xcodebuild -version | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/ $//')"
           xcode_version_key="$(printf '%s' "$xcode_version" | tr ' ' '-' | tr -cd '[:alnum:]-._')"
           echo "version=$xcode_version" >> "$GITHUB_OUTPUT"
           echo "version_key=$xcode_version_key" >> "$GITHUB_OUTPUT"
-
       - name: preflight-apple-platforms
         run: |
           preflight_args=()
@@ -99,45 +97,39 @@ jobs:
           python3 scripts/spm/preflight_apple_platforms.py \
             --variant "${{ matrix.variant }}" \
             "${preflight_args[@]}"
-
       - name: ensure-build-tools
         run: |
           if ! command -v ccache >/dev/null 2>&1; then
             brew install ccache
           fi
           ccache --version | head -n 1
-
-      - name: restore-ccache
-        id: restore_ccache
+      - id: restore_ccache
+        name: restore-ccache
         uses: actions/cache/restore@v5
         with:
+          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'config/moltenvk_dependency.json', 'config/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'config/moltenvk_dependency.json', 'config/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-
-            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
+            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-
+            ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-
-
       - name: reset-ccache-stats
         run: |
           mkdir -p "$CCACHE_DIR"
           ccache --zero-stats
-
       - name: fetch-upstream-tags
         run: |
           python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
-
       - name: prepare-upstream-source
         run: |
           python3 scripts/spm/source_acquisition.py export-source \
             --repo-root "$GITHUB_WORKSPACE" \
-            --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
+            --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" \
             --destination "$RUNNER_TEMP/upstream-source"
-
-      - name: prepare-moltenvk-dependency
-        id: moltenvk
+      - id: moltenvk
         if: matrix.variant == 'ncnn_vulkan'
+        name: prepare-moltenvk-dependency
         run: |
           moltenvk_args=(
             --output-dir "$RUNNER_TEMP/moltenvk"
@@ -148,14 +140,13 @@ jobs:
           fi
           python3 scripts/spm/prepare_moltenvk_dependency.py \
             "${moltenvk_args[@]}"
-
-      - name: build-xcframework
-        id: build_xcframework
+      - id: build_xcframework
+        name: build-xcframework
         run: |
           build_args=(
             --variant "${{ matrix.variant }}" \
-            --upstream-tag "${{ needs.verify.outputs.upstream_tag }}" \
-            --package-tag "${{ needs.verify.outputs.package_tag }}" \
+            --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" \
+            --package-tag "${{ needs.resolve.outputs.package_tag }}" \
             --source-root "$RUNNER_TEMP/upstream-source" \
             --output-dir "$RUNNER_TEMP/spm-artifacts"
           )
@@ -165,10 +156,9 @@ jobs:
               --moltenvk-include-dir "${{ steps.moltenvk.outputs.headers_include_dir }}"
             )
           fi
-          python3 scripts/spm/build_apple_xcframework.py "${build_args[@]}"
-
-      - name: verify-ccache-payload
-        id: verify_ccache_payload
+          python3 scripts/spm/build_apple_xcframework.py "${build_args[@]}" --skip-smoke-test
+      - id: verify_ccache_payload
+        name: verify-ccache-payload
         run: |
           payload_file="$(
             find "$CCACHE_DIR" \
@@ -186,14 +176,12 @@ jobs:
             exit 1
           fi
           echo "payload_file=$payload_file" >> "$GITHUB_OUTPUT"
-
-      - name: save-ccache
-        if: ${{ !cancelled() && steps.restore_ccache.outcome == 'success' && steps.build_xcframework.outcome == 'success' && steps.verify_ccache_payload.outcome == 'success' && steps.restore_ccache.outputs.cache-hit != 'true' }}
+      - if: ${{ !cancelled() && steps.restore_ccache.outcome == 'success' && steps.build_xcframework.outcome == 'success' && steps.verify_ccache_payload.outcome == 'success' && steps.restore_ccache.outputs.cache-hit != 'true' }}
+        name: save-ccache
         uses: actions/cache/save@v5
         with:
-          path: ${{ github.workspace }}/.ccache
           key: ${{ steps.restore_ccache.outputs.cache-primary-key }}
-
+          path: ${{ github.workspace }}/.ccache
       - name: validate-xcframework
         run: |
           validation_args=()
@@ -213,94 +201,129 @@ jobs:
           python3 scripts/spm/validate_mergeable_xcframework.py \
             "$archive_path" \
             "${validation_args[@]}"
-
-      - name: upload-validation-artifacts
+      - name: Record immutable artifact inventory
+        run: python3 scripts/ci_artifacts.py record --root "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}"
+      - continue-on-error: true
         id: upload_validation_artifacts
         if: always()
+        name: upload-validation-artifacts
         uses: actions/upload-artifact@v7
-        continue-on-error: true
         with:
+          if-no-files-found: ignore
           name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
+          overwrite: true
           path: |
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
-          if-no-files-found: ignore
-          overwrite: true
-
-      - name: retry-upload-validation-artifacts-backoff
-        if: ${{ !cancelled() && steps.upload_validation_artifacts.outcome == 'failure' }}
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/ci-artifacts.json
+      - if: ${{ !cancelled() && steps.upload_validation_artifacts.outcome == 'failure' }}
+        name: retry-upload-validation-artifacts-backoff
         run: sleep 10
-
-      - name: retry-upload-validation-artifacts
-        if: ${{ !cancelled() && steps.upload_validation_artifacts.outcome == 'failure' }}
+      - if: ${{ !cancelled() && steps.upload_validation_artifacts.outcome == 'failure' }}
+        name: retry-upload-validation-artifacts
         uses: actions/upload-artifact@v7
         with:
+          if-no-files-found: ignore
           name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
+          overwrite: true
           path: |
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
-          if-no-files-found: ignore
-          overwrite: true
-
-      - name: build-ccache-stats
-        if: always()
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/ci-artifacts.json
+      - if: always()
+        name: build-ccache-stats
         run: |
           ccache --show-stats
-
-  package_contract:
-    name: Validate generated package contract
-    needs: build
-    runs-on: macos-15-intel
-    env:
-      SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
+            variant: ncnn
+          - required_platforms: ios ios-simulator macos tvos tvos-simulator xros xros-simulator
+            variant: ncnn_vulkan
+    permissions:
+      contents: read
+  consumers:
+    name: Validate Consumers (${{ matrix.variant }})
+    runs-on: macos-15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: download-cpu-artifacts
-        id: download_cpu_artifacts
+      - name: Download final archives
         uses: actions/download-artifact@v8
-        continue-on-error: true
+        with:
+          name: apple-xcframework-validation-${{ matrix.variant }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/consumer-inputs
+      - name: Run Debug and Release consumers
+        run: python3 scripts/ci_artifacts.py consumers --root "$RUNNER_TEMP/consumer-inputs" --product "${{ matrix.variant }}"
+    needs:
+      - resolve
+      - build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
+            variant: ncnn
+          - required_platforms: ios ios-simulator macos tvos tvos-simulator xros xros-simulator
+            variant: ncnn_vulkan
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+  package_contract:
+    env:
+      SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
+    name: Validate Package Contract
+    needs:
+      - resolve
+      - build
+      - consumers
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - continue-on-error: true
+        id: download_cpu_artifacts
+        name: download-cpu-artifacts
+        uses: actions/download-artifact@v8
         with:
           name: apple-xcframework-validation-ncnn-${{ github.run_id }}
           path: artifacts/ncnn
-
-      - name: retry-download-cpu-artifacts-backoff
-        if: steps.download_cpu_artifacts.outcome == 'failure'
+      - if: steps.download_cpu_artifacts.outcome == 'failure'
+        name: retry-download-cpu-artifacts-backoff
         run: |
           rm -rf artifacts/ncnn
           sleep 10
-
-      - name: retry-download-cpu-artifacts
-        if: steps.download_cpu_artifacts.outcome == 'failure'
+      - if: steps.download_cpu_artifacts.outcome == 'failure'
+        name: retry-download-cpu-artifacts
         uses: actions/download-artifact@v8
         with:
           name: apple-xcframework-validation-ncnn-${{ github.run_id }}
           path: artifacts/ncnn
-
-      - name: download-vulkan-artifacts
+      - continue-on-error: true
         id: download_vulkan_artifacts
+        name: download-vulkan-artifacts
         uses: actions/download-artifact@v8
-        continue-on-error: true
         with:
           name: apple-xcframework-validation-ncnn_vulkan-${{ github.run_id }}
           path: artifacts/ncnn_vulkan
-
-      - name: retry-download-vulkan-artifacts-backoff
-        if: steps.download_vulkan_artifacts.outcome == 'failure'
+      - if: steps.download_vulkan_artifacts.outcome == 'failure'
+        name: retry-download-vulkan-artifacts-backoff
         run: |
           rm -rf artifacts/ncnn_vulkan
           sleep 10
-
-      - name: retry-download-vulkan-artifacts
-        if: steps.download_vulkan_artifacts.outcome == 'failure'
+      - if: steps.download_vulkan_artifacts.outcome == 'failure'
+        name: retry-download-vulkan-artifacts
         uses: actions/download-artifact@v8
         with:
           name: apple-xcframework-validation-ncnn_vulkan-${{ github.run_id }}
           path: artifacts/ncnn_vulkan
-
-      - name: validate-generated-package-contract
+      - name: Validate generated package contract
+        id: validate-generated-package-contract
         run: |
           python3 scripts/spm/validate_package_contract.py \
             --repo-root "$GITHUB_WORKSPACE" \
@@ -308,3 +331,26 @@ jobs:
             --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json \
             --release-archive artifacts/ncnn/ncnn-*.xcframework.zip \
             --release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Report all stage results
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci_artifacts.py summary
+    needs:
+      - verify
+      - resolve
+      - build
+      - consumers
+      - package_contract
+    if: always()
+defaults:
+  run:
+    shell: bash

@@ -192,6 +192,8 @@ def main() -> int:
             ],
             package_root,
         )
+        _run(["swift", "run", "-c", "debug", "SmokeSwift"], package_root)
+        _run(["swift", "run", "-c", "debug", "Smoke"], package_root)
         _run(["swift", "run", "-c", "release", "SmokeSwift"], package_root)
         _run(["swift", "run", "-c", "release", "Smoke"], package_root)
 

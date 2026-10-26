@@ -1,6 +1,5 @@
 name: _publish-upstream-release-core
-
-on:
+'on':
   workflow_call:
     inputs:
       upstream_tag:
@@ -16,37 +15,31 @@ on:
         required: false
         type: boolean
         default: false
-
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
   group: spm-package-publication-${{ github.repository }}
   cancel-in-progress: false
-
 jobs:
   verify:
-    name: Verify packaging gates
+    name: Verify
     if: github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: reject-default-branch-publish-for-non-stable
         if: ${{ inputs.publish_to_default_branch && inputs.release_channel != 'stable' }}
         run: |
           echo "publish_to_default_branch is only supported for stable releases." >&2
           exit 1
-
       - name: run-packaging-unit-tests
         run: |
           python3 scripts/verify_sop_conformance.py
           python3 -m unittest discover -s tests -p "test_*.py"
-
   resolve:
-    name: Resolve package release
+    name: Resolve
     if: github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     outputs:
@@ -61,15 +54,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: fetch-package-tags
         run: |
           git fetch origin 'refs/tags/*:refs/tags/*'
-
       - name: fetch-upstream-tags
         run: |
           python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
-
       - name: resolve-upstream-tag
         id: resolve
         run: |
@@ -78,12 +68,10 @@ jobs:
             select_args+=(--explicit-tag "${{ inputs.upstream_tag }}")
           fi
           python3 scripts/spm/select_upstream_tag.py "${select_args[@]}"
-
       - name: Capture immutable release inputs
         id: release_inputs
         run: |
           python3 scripts/release_inputs.py capture --upstream-tag "${{ steps.resolve.outputs.upstream_tag }}" --github-output "$GITHUB_OUTPUT"
-
       - name: inspect-release
         id: release_status
         env:
@@ -107,9 +95,9 @@ jobs:
             --tag "${{ steps.resolve.outputs.build_tag }}" \
             --release-channel "${{ inputs.release_channel }}" \
             --github-output "$GITHUB_OUTPUT"
-
+    needs: verify
   build:
-    name: Build Apple artifacts (${{ matrix.variant }})
+    name: Build (${{ matrix.variant }})
     needs:
       - verify
       - resolve
@@ -129,11 +117,12 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
       GITHUB_TOKEN: ${{ github.token }}
+      SPMFORGE_EXPECTED_UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
+      SPMFORGE_DEFER_CONSUMERS: "1"
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: resolve-xcode-version
         id: xcode
         run: |
@@ -141,7 +130,6 @@ jobs:
           xcode_version_key="$(printf '%s' "$xcode_version" | tr ' ' '-' | tr -cd '[:alnum:]-._')"
           echo "version=$xcode_version" >> "$GITHUB_OUTPUT"
           echo "version_key=$xcode_version_key" >> "$GITHUB_OUTPUT"
-
       - name: preflight-apple-platforms
         run: |
           preflight_args=()
@@ -151,14 +139,12 @@ jobs:
           python3 scripts/spm/preflight_apple_platforms.py \
             --variant "${{ matrix.variant }}" \
             "${preflight_args[@]}"
-
       - name: ensure-build-tools
         run: |
           if ! command -v ccache >/dev/null 2>&1; then
             brew install ccache
           fi
           ccache --version | head -n 1
-
       - name: restore-ccache
         id: restore_ccache
         uses: actions/cache/restore@v5
@@ -169,16 +155,13 @@ jobs:
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-
-
       - name: reset-ccache-stats
         run: |
           mkdir -p "$CCACHE_DIR"
           ccache --zero-stats
-
       - name: fetch-upstream-tags
         run: |
           python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
-
       - name: prepare-upstream-source
         env:
           SPMFORGE_EXPECTED_UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
@@ -187,7 +170,6 @@ jobs:
             --repo-root "$GITHUB_WORKSPACE" \
             --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" \
             --destination "$RUNNER_TEMP/upstream-source"
-
       - name: prepare-moltenvk-dependency
         id: moltenvk
         if: matrix.variant == 'ncnn_vulkan'
@@ -195,7 +177,6 @@ jobs:
           python3 scripts/spm/prepare_moltenvk_dependency.py \
             --output-dir "$RUNNER_TEMP/moltenvk" \
             --github-output "$GITHUB_OUTPUT"
-
       - name: build-xcframework
         id: build_xcframework
         run: |
@@ -212,8 +193,7 @@ jobs:
               --moltenvk-include-dir "${{ steps.moltenvk.outputs.headers_include_dir }}"
             )
           fi
-          python3 scripts/spm/build_apple_xcframework.py "${build_args[@]}"
-
+          python3 scripts/spm/build_apple_xcframework.py "${build_args[@]}" --skip-smoke-test
       - name: verify-ccache-payload
         id: verify_ccache_payload
         run: |
@@ -233,14 +213,12 @@ jobs:
             exit 1
           fi
           echo "payload_file=$payload_file" >> "$GITHUB_OUTPUT"
-
       - name: save-ccache
         if: ${{ !cancelled() && steps.restore_ccache.outcome == 'success' && steps.build_xcframework.outcome == 'success' && steps.verify_ccache_payload.outcome == 'success' && steps.restore_ccache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: ${{ steps.restore_ccache.outputs.cache-primary-key }}
-
       - name: validate-xcframework
         run: |
           validation_args=()
@@ -260,7 +238,8 @@ jobs:
           python3 scripts/spm/validate_mergeable_xcframework.py \
             "$archive_path" \
             "${validation_args[@]}"
-
+      - name: Record immutable artifact inventory
+        run: python3 scripts/ci_artifacts.py record --root "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}"
       - name: upload-artifacts
         id: upload_artifacts
         uses: actions/upload-artifact@v7
@@ -270,12 +249,11 @@ jobs:
           path: |
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/ci-artifacts.json
           overwrite: true
-
       - name: retry-upload-artifacts-backoff
         if: steps.upload_artifacts.outcome == 'failure'
         run: sleep 10
-
       - name: retry-upload-artifacts
         if: steps.upload_artifacts.outcome == 'failure'
         uses: actions/upload-artifact@v7
@@ -284,33 +262,61 @@ jobs:
           path: |
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/*.xcframework.zip
             ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/${{ matrix.variant }}.release.json
+            ${{ runner.temp }}/spm-artifacts/${{ matrix.variant }}/ci-artifacts.json
           overwrite: true
-
       - name: build-ccache-stats
         if: always()
         run: |
           ccache --show-stats
-
-  release:
-    name: Publish selected release channel
+    permissions:
+      contents: read
+  consumers:
+    name: Validate Consumers (${{ matrix.variant }})
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download final archives
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.variant }}
+          path: ${{ runner.temp }}/consumer-inputs
+      - name: Run Debug and Release consumers
+        run: python3 scripts/ci_artifacts.py consumers --root "$RUNNER_TEMP/consumer-inputs" --product "${{ matrix.variant }}"
     needs:
       - resolve
       - build
-    if: always() && needs.resolve.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.resolve.outputs.release_mode != 'skip' && needs.resolve.outputs.release_mode != 'metadata'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ncnn
+            required_platforms: ios ios-simulator macos ios-maccatalyst tvos tvos-simulator watchos watchos-simulator xros xros-simulator
+          - variant: ncnn_vulkan
+            required_platforms: ios ios-simulator macos tvos tvos-simulator xros xros-simulator
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+  release:
+    name: Publish
+    needs:
+      - resolve
+      - build
+      - consumers
+    if: (always() && needs.resolve.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.resolve.outputs.release_mode != 'skip' && needs.resolve.outputs.release_mode != 'metadata') && (needs.consumers.result == 'success' || (needs.resolve.outputs.release_mode == 'skip' && needs.consumers.result == 'skipped'))
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: fetch-package-tags
         run: |
           git fetch origin 'refs/tags/*:refs/tags/*'
-
       - name: Restore immutable release inputs
         run: |
           python3 scripts/release_inputs.py capture --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" --upstream-commit "${{ needs.resolve.outputs.upstream_commit }}"
-
       - name: download-cpu-artifacts
         id: download_cpu_artifacts
         uses: actions/download-artifact@v8
@@ -318,20 +324,17 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}-ncnn
           path: artifacts/ncnn
-
       - name: retry-download-cpu-artifacts-backoff
         if: steps.download_cpu_artifacts.outcome == 'failure'
         run: |
           rm -rf artifacts/ncnn
           sleep 10
-
       - name: retry-download-cpu-artifacts
         if: steps.download_cpu_artifacts.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_prefix }}-ncnn
           path: artifacts/ncnn
-
       - name: download-vulkan-artifacts
         id: download_vulkan_artifacts
         uses: actions/download-artifact@v8
@@ -339,20 +342,17 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}-ncnn_vulkan
           path: artifacts/ncnn_vulkan
-
       - name: retry-download-vulkan-artifacts-backoff
         if: steps.download_vulkan_artifacts.outcome == 'failure'
         run: |
           rm -rf artifacts/ncnn_vulkan
           sleep 10
-
       - name: retry-download-vulkan-artifacts
         if: steps.download_vulkan_artifacts.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_prefix }}-ncnn_vulkan
           path: artifacts/ncnn_vulkan
-
       - name: render-candidate-package
         run: |
           python3 scripts/spm/render_package.py \
@@ -360,7 +360,6 @@ jobs:
             --release-metadata artifacts/ncnn/ncnn.release.json \
             --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json \
             --current-release-json "$RUNNER_TEMP/candidate-current-release.json"
-
       - name: select-publication-tag
         id: publication_plan
         run: |
@@ -380,7 +379,6 @@ jobs:
             plan_args+=(--next-package-tag "${{ needs.resolve.outputs.next_package_tag }}")
           fi
           python3 scripts/spm/release_state.py "${plan_args[@]}"
-
       - name: render-package
         run: |
           render_args=(
@@ -393,7 +391,6 @@ jobs:
             render_args+=(--package-tag-override "${{ steps.publication_plan.outputs.final_package_tag }}")
           fi
           python3 scripts/spm/render_package.py "${render_args[@]}"
-
       - name: check-existing-release
         id: release_status
         env:
@@ -414,7 +411,6 @@ jobs:
           fi
 
           python3 scripts/spm/release_state.py "${inspect_args[@]}"
-
       - name: summarize-release-decision
         run: |
           missing_assets="${{ steps.release_status.outputs.missing_assets }}"
@@ -436,7 +432,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "::notice title=Release decision::mode=${{ steps.release_status.outputs.mode }}, package_tag=${{ steps.publication_plan.outputs.final_package_tag }}, missing_assets=${missing_assets}, metadata_needs_repair=${{ steps.release_status.outputs.metadata_needs_repair }}"
-
       - name: validate-package-contract
         run: |
           python3 scripts/spm/validate_package_contract.py \
@@ -446,7 +441,6 @@ jobs:
             --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json \
             --release-archive artifacts/ncnn/ncnn-*.xcframework.zip \
             --release-archive artifacts/ncnn_vulkan/ncnn-*.xcframework.zip
-
       - name: prepare-release-ref
         if: steps.release_status.outputs.mode != 'skip'
         id: prepare_release_ref
@@ -492,7 +486,6 @@ jobs:
           git tag "${{ steps.publication_plan.outputs.final_package_tag }}" "${commit_sha}"
           git push origin "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}"
           echo "release_commit=${commit_sha}" >> "$GITHUB_OUTPUT"
-
       - name: create-release-notes
         run: |
           channel_label="${{ inputs.release_channel }}"
@@ -513,7 +506,6 @@ jobs:
           - Vulkan runtime contract: NCNNVulkan strong-links @rpath/MoltenVK.framework/MoltenVK; SwiftPM supplies MoltenVK through the MoltenVK package dependency
           - Verification: script unit tests, xcframework artifact validation, final package contract validation, local xcframework smoke tests
           EOF
-
       - name: publish-release
         if: steps.release_status.outputs.mode != 'skip'
         env:
@@ -551,7 +543,6 @@ jobs:
           else
             gh release create "${release_args[@]}"
           fi
-
       - name: normalize-release-metadata
         if: steps.release_status.outputs.mode != 'skip'
         env:
@@ -576,7 +567,6 @@ jobs:
               -f name="${{ steps.publication_plan.outputs.final_package_tag }}" \
               -F body=@/tmp/spm-release-notes.md >/dev/null
           fi
-
       - name: select-release-commit
         if: ${{ inputs.publish_to_default_branch && inputs.release_channel == 'stable' && steps.release_status.outputs.mode != 'skip' }}
         id: release_commit
@@ -586,16 +576,18 @@ jobs:
           else
             echo "commit_sha=${{ steps.prepare_release_ref.outputs.release_commit }}" >> "$GITHUB_OUTPUT"
           fi
-
       - name: optionally-update-default-branch
         if: ${{ inputs.publish_to_default_branch && inputs.release_channel == 'stable' && steps.release_status.outputs.mode != 'skip' }}
         run: |
           TARGET_BRANCH="${{ github.event.repository.default_branch || 'main' }}"
           git push origin "${{ steps.release_commit.outputs.commit_sha }}:refs/heads/${TARGET_BRANCH}"
-
+    permissions:
+      contents: write
   promote_existing_stable:
-    name: Promote existing stable metadata
-    needs: [verify, resolve]
+    name: Promote Stable
+    needs:
+      - verify
+      - resolve
     if: needs.resolve.result == 'success' && needs.resolve.outputs.release_mode == 'skip' && inputs.release_channel == 'stable' && inputs.publish_to_default_branch
     runs-on: ubuntu-latest
     steps:
@@ -611,10 +603,13 @@ jobs:
           git fetch origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" "refs/tags/${TARGET_VERSION}:refs/tags/${TARGET_VERSION}"
           release_commit="$(git rev-parse "refs/tags/${TARGET_VERSION}^{commit}")"
           git push origin "${release_commit}:refs/heads/${DEFAULT_BRANCH}"
-
+    permissions:
+      contents: write
   repair_existing_metadata:
-    name: Repair complete release metadata without rebuilding
-    needs: [verify, resolve]
+    name: Repair Metadata
+    needs:
+      - verify
+      - resolve
     if: needs.resolve.result == 'success' && needs.resolve.outputs.release_mode == 'metadata'
     runs-on: ubuntu-latest
     steps:
@@ -641,3 +636,46 @@ jobs:
             release_commit="$(git rev-parse "refs/tags/${TARGET_VERSION}^{commit}")"
             git push origin "${release_commit}:refs/heads/${DEFAULT_BRANCH}"
           fi
+    permissions:
+      contents: write
+  reuse:
+    name: Reuse
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Explain existing release reuse
+        run: echo "Input identity and complete published assets match; no build, tag or upload is required."
+    needs:
+      - verify
+      - resolve
+    if: needs.resolve.outputs.release_mode == 'skip'
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Report all stage results
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci_artifacts.py summary
+    needs:
+      - verify
+      - resolve
+      - build
+      - consumers
+      - release
+      - promote_existing_stable
+      - repair_existing_metadata
+      - reuse
+    if: always()
+defaults:
+  run:
+    shell: bash
