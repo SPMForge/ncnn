@@ -312,7 +312,7 @@ jobs:
       - build
       - consumers
     if: (always() && needs.resolve.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.resolve.outputs.release_mode != 'skip' && needs.resolve.outputs.release_mode != 'metadata') && (needs.consumers.result == 'success' || (needs.resolve.outputs.release_mode == 'skip' && needs.consumers.result == 'skipped'))
-    runs-on: macos-15-intel
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -438,6 +438,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "::notice title=Release decision::mode=${{ steps.release_status.outputs.mode }}, package_tag=${{ steps.publication_plan.outputs.final_package_tag }}, missing_assets=${missing_assets}, metadata_needs_repair=${{ steps.release_status.outputs.metadata_needs_repair }}"
+      - name: Verify Metal runtime capability
+        run: |
+          swift -e 'import Metal; let devices = MTLCopyAllDevices(); precondition(!devices.isEmpty, "Vulkan acceptance requires a Metal device"); devices.forEach { print("Metal device: \($0.name)") }'
       - name: validate-package-contract
         run: |
           python3 scripts/spm/validate_package_contract.py \

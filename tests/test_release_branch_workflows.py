@@ -13,6 +13,15 @@ README_PATH = REPO_ROOT / "README.md"
 
 
 class ReleaseBranchWorkflowTests(unittest.TestCase):
+    def test_generated_sdk_runtime_gates_use_the_vulkan_consumer_runner(self) -> None:
+        for path, job in [(VALIDATE_WORKFLOW_PATH, "package_contract"), (PUBLISH_CORE_WORKFLOW_PATH, "release")]:
+            workflow = path.read_text()
+            section = self._job_section(workflow, job).split("\n  summary:")[0]
+            self.assertIn("runs-on: macos-15\n", section)
+            self.assertNotIn("runs-on: macos-15-intel", section)
+            self.assertIn("Verify Metal runtime capability", section)
+            self.assertIn("MTLCopyAllDevices", section)
+
     def _job_section(self, workflow: str, job_name: str, next_job_name: str | None = None) -> str:
         start_marker = f"  {job_name}:\n"
         start_index = workflow.index(start_marker)

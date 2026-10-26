@@ -284,7 +284,7 @@ jobs:
       - resolve
       - build
       - consumers
-    runs-on: macos-15-intel
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -325,6 +325,9 @@ jobs:
         with:
           name: apple-xcframework-validation-ncnn_vulkan-${{ github.run_id }}
           path: artifacts/ncnn_vulkan
+      - name: Verify Metal runtime capability
+        run: |
+          swift -e 'import Metal; let devices = MTLCopyAllDevices(); precondition(!devices.isEmpty, "Vulkan acceptance requires a Metal device"); devices.forEach { print("Metal device: \($0.name)") }'
       - name: Validate generated package contract
         id: validate-generated-package-contract
         run: |
