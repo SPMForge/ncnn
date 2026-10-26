@@ -35,17 +35,11 @@ jobs:
 
       - name: run-packaging-unit-tests
         run: |
-          python3 -m unittest \
-            scripts.spm.tests.test_release_flow \
-            scripts.spm.tests.test_release_state \
-            scripts.spm.tests.test_source_acquisition \
-            scripts.spm.tests.test_spm_packaging \
-            scripts.spm.tests.test_xcframework_validation \
-            scripts.tests.test_release_branch_workflows
+          python3 -m unittest discover -s tests -p "test_*.py"
 
       - name: verify-sop-conformance
         run: |
-          python3 scripts/spm/verify_sop_conformance.py
+          python3 scripts/verify_sop_conformance.py
 
       - name: validate-workflow-yaml
         run: |
@@ -82,7 +76,6 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
       GITHUB_TOKEN: ${{ github.token }}
-      HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache
       SPMFORGE_MOLTENVK_VERSION: ${{ inputs.moltenvk_version }}
     steps:
       - uses: actions/checkout@v6
@@ -107,30 +100,24 @@ jobs:
             --variant "${{ matrix.variant }}" \
             "${preflight_args[@]}"
 
-      - name: restore-homebrew-download-cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.HOMEBREW_CACHE }}
-          key: ${{ runner.os }}-homebrew-downloads-v1-ccache
+      - name: ensure-build-tools
+        run: |
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
+          ccache --version | head -n 1
 
       - name: restore-ccache
         id: restore_ccache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'scripts/spm/moltenvk_dependency.json', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
+          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'config/moltenvk_dependency.json', 'config/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           restore-keys: |
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-${{ env.SPMFORGE_MOLTENVK_VERSION || 'pinned-moltenvk' }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.verify.outputs.upstream_tag }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-
-
-      - name: install-ccache
-        run: |
-          if ! command -v ccache >/dev/null 2>&1; then
-            brew install ccache || true
-          fi
-          ccache --version
 
       - name: reset-ccache-stats
         run: |

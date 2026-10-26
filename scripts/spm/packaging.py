@@ -80,13 +80,14 @@ class BuildArtifactMetadata:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_ROOT = Path(__file__).resolve().parent
+CONFIG_ROOT = REPO_ROOT / "config"
 DEFAULT_PACKAGE_NAME = "ncnn"
 DEFAULT_OWNER = "SPMForge"
 DEFAULT_REPO = "ncnn"
 TOOLCHAIN_FILE = REPO_ROOT / "toolchains" / "ios.toolchain.cmake"
-CURRENT_RELEASE_METADATA_PATH = SCRIPTS_ROOT / "current_release.json"
-PLATFORM_METADATA_PATH = SCRIPTS_ROOT / "platforms.json"
-MOLTENVK_DEPENDENCY_CONFIG_PATH = SCRIPTS_ROOT / "moltenvk_dependency.json"
+CURRENT_RELEASE_METADATA_PATH = CONFIG_ROOT / "current_release.json"
+PLATFORM_METADATA_PATH = CONFIG_ROOT / "platforms.json"
+MOLTENVK_DEPENDENCY_CONFIG_PATH = CONFIG_ROOT / "moltenvk_dependency.json"
 PACKAGE_SWIFT_PATH = REPO_ROOT / "Package.swift"
 BUILD_ARTIFACT_METADATA_SCHEMA_VERSION = 2
 MOLTENVK_VERSION_ENV = "SPMFORGE_MOLTENVK_VERSION"

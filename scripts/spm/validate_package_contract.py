@@ -178,7 +178,7 @@ def _render_release_metadata(
     repo: str,
     package_tag_override: str | None,
 ) -> Path:
-    current_release_json = package_root / "scripts" / "spm" / "current_release.json"
+    current_release_json = package_root / "config" / "current_release.json"
     command = [
         sys.executable,
         str(packaging.SCRIPTS_ROOT / "render_package.py"),
@@ -296,17 +296,40 @@ let package = Package(
     ],
     products: [
         .executable(name: "Smoke", targets: ["Smoke"]),
+        .executable(name: "SmokeSwift", targets: ["SmokeSwift"]),
     ],
     dependencies: [
         .package(name: "{package_name}", path: "{local_package_relative_path}"),
     ],
     targets: [
         .executableTarget(
+            name: "SmokeSwift",
+            dependencies: [
+                .product(name: "{release_input.build_metadata.release_asset.variant.product_name}", package: "{package_name}"),
+            ],
+            path: "SmokeSwift",
+            swiftSettings: [
+                .interoperabilityMode(.Cxx),
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path",
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path/PackageFrameworks",
+                ]),
+            ]
+        ),
+        .executableTarget(
             name: "Smoke",
             dependencies: [
                 .product(name: "{release_input.build_metadata.release_asset.variant.product_name}", package: "{package_name}"),
             ],
-            path: "Smoke"
+            path: "Smoke",
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path",
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path/PackageFrameworks",
+                ]),
+            ]
         ),
     ],
     cxxLanguageStandard: .cxx11
@@ -314,6 +337,25 @@ let package = Package(
 """
 
     variant = release_input.build_metadata.release_asset.variant
+    main_swift = f"""import Foundation
+import {variant.target_name}
+
+let cpuCount = ncnn.get_cpu_count()
+guard cpuCount > 0 else {{
+    fatalError("ncnn CPU count check failed")
+}}
+let mat = ncnn_mat_create_2d(4, 4, nil)
+guard let mat else {{
+    fatalError("ncnn_mat_create_2d returned nil")
+}}
+ncnn_mat_fill_float(mat, 42.0)
+guard ncnn_mat_get_w(mat) == 4 && ncnn_mat_get_h(mat) == 4 else {{
+    fatalError("ncnn_mat dimensions mismatch")
+}}
+ncnn_mat_destroy(mat)
+print("✅ [Swift SPM Consumer] {variant.target_name} verified! Apple Silicon Cores: \\(cpuCount), Version: \\(String(cString: ncnn_version()))")
+"""
+
     if variant is packaging.VULKAN_VARIANT:
         main_cpp = f"""#include <{variant.target_name}/net.h>
 #include <{variant.target_name}/gpu.h>
@@ -337,7 +379,10 @@ int main()
 }}
 """
 
+    (consumer_root / "Smoke").mkdir(parents=True, exist_ok=True)
+    (consumer_root / "SmokeSwift").mkdir(parents=True, exist_ok=True)
     (consumer_root / "Package.swift").write_text(package_swift)
+    (consumer_root / "SmokeSwift" / "main.swift").write_text(main_swift)
     (consumer_root / "Smoke" / "main.cpp").write_text(main_cpp)
     return consumer_package_name
 
@@ -364,7 +409,7 @@ def _validate_local_package_consumers(
                 [
                     "xcodebuild",
                     "-scheme",
-                    consumer_package_name,
+                    f"{consumer_package_name}-Package",
                     "-configuration",
                     "Release",
                     "-destination",
@@ -374,6 +419,8 @@ def _validate_local_package_consumers(
                 ],
                 cwd=consumer_root,
             )
+            _run(["swift", "run", "-c", "release", "SmokeSwift"], cwd=consumer_root)
+            _run(["swift", "run", "-c", "release", "Smoke"], cwd=consumer_root)
 
 
 def main(argv: list[str] | None = None) -> int:

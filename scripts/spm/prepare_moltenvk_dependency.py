@@ -65,7 +65,7 @@ def _parse_arguments() -> argparse.Namespace:
         type=Path,
         help=(
             "Write a repo-local moltenvk_dependency.json pin using the resolved version and checksums. "
-            "Defaults to scripts/spm/moltenvk_dependency.json when no path is provided."
+            "Defaults to config/moltenvk_dependency.json when no path is provided."
         ),
     )
     return parser.parse_args()

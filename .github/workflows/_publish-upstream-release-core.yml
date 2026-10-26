@@ -21,7 +21,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: _publish-upstream-release-core-${{ github.workflow }}-${{ inputs.release_channel }}-${{ inputs.upstream_tag || github.ref }}
+  group: spm-package-publication-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -42,13 +42,8 @@ jobs:
 
       - name: run-packaging-unit-tests
         run: |
-          python3 -m unittest \
-            scripts.spm.tests.test_release_flow \
-            scripts.spm.tests.test_release_state \
-            scripts.spm.tests.test_source_acquisition \
-            scripts.spm.tests.test_spm_packaging \
-            scripts.spm.tests.test_xcframework_validation \
-            scripts.tests.test_release_branch_workflows
+          python3 scripts/verify_sop_conformance.py
+          python3 -m unittest discover -s tests -p "test_*.py"
 
   resolve:
     name: Resolve package release
@@ -56,10 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
+      upstream_commit: ${{ steps.release_inputs.outputs.upstream_commit }}
       build_tag: ${{ steps.resolve.outputs.build_tag }}
       package_tag: ${{ steps.resolve.outputs.package_tag }}
       latest_package_tag: ${{ steps.resolve.outputs.latest_package_tag }}
       next_package_tag: ${{ steps.resolve.outputs.next_package_tag }}
+      release_mode: ${{ steps.release_status.outputs.mode }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -82,11 +79,41 @@ jobs:
           fi
           python3 scripts/spm/select_upstream_tag.py "${select_args[@]}"
 
+      - name: Capture immutable release inputs
+        id: release_inputs
+        run: |
+          python3 scripts/release_inputs.py capture --upstream-tag "${{ steps.resolve.outputs.upstream_tag }}" --github-output "$GITHUB_OUTPUT"
+
+      - name: inspect-release
+        id: release_status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          inspect_args=(
+            inspect-release
+            --github-repository "$GITHUB_REPOSITORY"
+            --package-tag "${{ steps.resolve.outputs.build_tag }}"
+            --upstream-tag "${{ steps.resolve.outputs.upstream_tag }}"
+            --release-channel "${{ inputs.release_channel }}"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ "${{ steps.resolve.outputs.remote_tag_exists }}" == "true" ]]; then
+            inspect_args+=(--tag-exists)
+          fi
+          python3 scripts/spm/release_state.py "${inspect_args[@]}"
+
+          python3 scripts/release_inputs.py guard \
+            --tag "${{ steps.resolve.outputs.build_tag }}" \
+            --release-channel "${{ inputs.release_channel }}" \
+            --github-output "$GITHUB_OUTPUT"
+
   build:
     name: Build Apple artifacts (${{ matrix.variant }})
     needs:
       - verify
       - resolve
+    if: needs.resolve.outputs.release_mode != 'skip' && needs.resolve.outputs.release_mode != 'metadata'
     strategy:
       fail-fast: false
       matrix:
@@ -102,7 +129,6 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_NOHASHDIR: "true"
       GITHUB_TOKEN: ${{ github.token }}
-      HOMEBREW_CACHE: ${{ github.workspace }}/.homebrew-cache
     steps:
       - uses: actions/checkout@v6
         with:
@@ -126,29 +152,23 @@ jobs:
             --variant "${{ matrix.variant }}" \
             "${preflight_args[@]}"
 
-      - name: restore-homebrew-download-cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.HOMEBREW_CACHE }}
-          key: ${{ runner.os }}-homebrew-downloads-v1-ccache
+      - name: ensure-build-tools
+        run: |
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
+          ccache --version | head -n 1
 
       - name: restore-ccache
         id: restore_ccache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'scripts/spm/moltenvk_dependency.json', 'scripts/spm/platforms.json', 'toolchains/ios.toolchain.cmake') }}
+          key: ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-${{ hashFiles('scripts/spm/archive_builder.py', 'scripts/spm/build_apple_xcframework.py', 'scripts/spm/packaging.py', 'scripts/spm/prepare_moltenvk_dependency.py', 'config/moltenvk_dependency.json', 'config/platforms.json', 'toolchains/ios.toolchain.cmake') }}
           restore-keys: |
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-${{ needs.resolve.outputs.upstream_tag }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-${{ matrix.variant }}-
             ${{ runner.os }}-ccache-v3-${{ steps.xcode.outputs.version_key }}-
-
-      - name: install-ccache
-        run: |
-          if ! command -v ccache >/dev/null 2>&1; then
-            brew install ccache || true
-          fi
-          ccache --version
 
       - name: reset-ccache-stats
         run: |
@@ -160,6 +180,8 @@ jobs:
           python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
 
       - name: prepare-upstream-source
+        env:
+          SPMFORGE_EXPECTED_UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
         run: |
           python3 scripts/spm/source_acquisition.py export-source \
             --repo-root "$GITHUB_WORKSPACE" \
@@ -274,6 +296,7 @@ jobs:
     needs:
       - resolve
       - build
+    if: always() && needs.resolve.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.resolve.outputs.release_mode != 'skip' && needs.resolve.outputs.release_mode != 'metadata'
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
@@ -283,6 +306,10 @@ jobs:
       - name: fetch-package-tags
         run: |
           git fetch origin 'refs/tags/*:refs/tags/*'
+
+      - name: Restore immutable release inputs
+        run: |
+          python3 scripts/release_inputs.py capture --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}" --upstream-commit "${{ needs.resolve.outputs.upstream_commit }}"
 
       - name: download-cpu-artifacts
         id: download_cpu_artifacts
@@ -360,7 +387,7 @@ jobs:
             --output Package.swift
             --release-metadata artifacts/ncnn/ncnn.release.json
             --release-metadata artifacts/ncnn_vulkan/ncnn_vulkan.release.json
-            --current-release-json scripts/spm/current_release.json
+            --current-release-json config/current_release.json
           )
           if [ "${{ steps.publication_plan.outputs.final_package_tag }}" != "${{ needs.resolve.outputs.build_tag }}" ]; then
             render_args+=(--package-tag-override "${{ steps.publication_plan.outputs.final_package_tag }}")
@@ -372,21 +399,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ inputs.release_channel }}" = "sync" ] &&
-             [ "${{ steps.publication_plan.outputs.package_contract_matches }}" = "false" ] &&
-             [ "${{ steps.publication_plan.outputs.final_package_tag }}" = "${{ needs.resolve.outputs.latest_package_tag }}" ]; then
-            echo "mode=skip" >> "$GITHUB_OUTPUT"
-            echo "release_exists=true" >> "$GITHUB_OUTPUT"
-            echo "metadata_needs_repair=false" >> "$GITHUB_OUTPUT"
-            echo "missing_assets=" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Release decision::skipping sync publish because rendered package contract differs from latest tag"
-            exit 0
-          fi
-
-          latest_release_tag=""
-          release_view_json="$RUNNER_TEMP/release-view.json"
+          set -euo pipefail
           inspect_args=(
             inspect-release
+            --github-repository "$GITHUB_REPOSITORY"
             --package-tag "${{ steps.publication_plan.outputs.final_package_tag }}"
             --upstream-tag "${{ needs.resolve.outputs.upstream_tag }}"
             --release-channel "${{ inputs.release_channel }}"
@@ -395,16 +411,6 @@ jobs:
 
           if [[ "${{ steps.publication_plan.outputs.remote_tag_exists }}" == "true" ]]; then
             inspect_args+=(--tag-exists)
-          fi
-
-          if gh release view "${{ steps.publication_plan.outputs.final_package_tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json isPrerelease,assets >"$release_view_json" 2>/dev/null; then
-            inspect_args+=(--release-view-json "$release_view_json")
-          fi
-
-          if latest_release_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name' 2>/dev/null)"; then
-            inspect_args+=(--latest-release-tag "$latest_release_tag")
           fi
 
           python3 scripts/spm/release_state.py "${inspect_args[@]}"
@@ -455,16 +461,20 @@ jobs:
               echo "package tag already exists without Package.swift: ${{ steps.publication_plan.outputs.final_package_tag }}" >&2
               exit 1
             fi
-            if ! git show "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}:scripts/spm/current_release.json" >"$existing_release_json" 2>/dev/null; then
-              echo "package tag already exists without scripts/spm/current_release.json: ${{ steps.publication_plan.outputs.final_package_tag }}" >&2
-              exit 1
+            if ! git show "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}:config/current_release.json" >"$existing_release_json" 2>/dev/null; then
+              if ! git show "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}:scripts/spm/current_release.json" >"$existing_release_json" 2>/dev/null; then
+                echo "package tag already exists without config/current_release.json: ${{ steps.publication_plan.outputs.final_package_tag }}" >&2
+                exit 1
+              fi
             fi
+            git show "refs/tags/${{ steps.publication_plan.outputs.final_package_tag }}:config/release-inputs.json" > "$RUNNER_TEMP/existing-release-inputs.json"
+            cmp "$RUNNER_TEMP/existing-release-inputs.json" config/release-inputs.json
             if ! cmp -s "$existing_package_file" Package.swift; then
               echo "package tag already exists with a different Package.swift: ${{ steps.publication_plan.outputs.final_package_tag }}" >&2
               exit 1
             fi
-            if ! cmp -s "$existing_release_json" scripts/spm/current_release.json; then
-              echo "package tag already exists with a different scripts/spm/current_release.json: ${{ steps.publication_plan.outputs.final_package_tag }}" >&2
+            if ! cmp -s "$existing_release_json" config/current_release.json; then
+              echo "package tag already exists with a different config/current_release.json: ${{ steps.publication_plan.outputs.final_package_tag }}" >&2
               exit 1
             fi
             echo "release_commit=${{ steps.publication_plan.outputs.remote_tag_commit }}" >> "$GITHUB_OUTPUT"
@@ -473,7 +483,7 @@ jobs:
 
           git switch --detach
           git add Package.swift
-          git add scripts/spm/current_release.json
+          git add config/current_release.json config/release-inputs.json
           if ! git diff --cached --quiet; then
             git commit -m "Update SwiftPM binary metadata for ${{ steps.publication_plan.outputs.final_package_tag }}"
           fi
@@ -529,9 +539,9 @@ jobs:
           fi
 
           if gh release view "${{ steps.publication_plan.outputs.final_package_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "${{ steps.publication_plan.outputs.final_package_tag }}" \
+            python3 scripts/upload_release_assets.py \
+              --tag "${{ steps.publication_plan.outputs.final_package_tag }}" \
               --repo "$GITHUB_REPOSITORY" \
-              --clobber \
               artifacts/ncnn/*.zip \
               artifacts/ncnn_vulkan/*.zip
             gh release edit "${{ steps.publication_plan.outputs.final_package_tag }}" \
@@ -582,3 +592,52 @@ jobs:
         run: |
           TARGET_BRANCH="${{ github.event.repository.default_branch || 'main' }}"
           git push origin "${{ steps.release_commit.outputs.commit_sha }}:refs/heads/${TARGET_BRANCH}"
+
+  promote_existing_stable:
+    name: Promote existing stable metadata
+    needs: [verify, resolve]
+    if: needs.resolve.result == 'success' && needs.resolve.outputs.release_mode == 'skip' && inputs.release_channel == 'stable' && inputs.publish_to_default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fast-forward default branch to verified stable tag
+        env:
+          TARGET_VERSION: ${{ needs.resolve.outputs.build_tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" "refs/tags/${TARGET_VERSION}:refs/tags/${TARGET_VERSION}"
+          release_commit="$(git rev-parse "refs/tags/${TARGET_VERSION}^{commit}")"
+          git push origin "${release_commit}:refs/heads/${DEFAULT_BRANCH}"
+
+  repair_existing_metadata:
+    name: Repair complete release metadata without rebuilding
+    needs: [verify, resolve]
+    if: needs.resolve.result == 'success' && needs.resolve.outputs.release_mode == 'metadata'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Normalize existing release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_VERSION: ${{ needs.resolve.outputs.build_tag }}
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          PROMOTE_STABLE: ${{ inputs.publish_to_default_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TARGET_VERSION}" --jq '.id')"
+          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -F prerelease=false >/dev/null
+          else
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -F prerelease=true -F make_latest=false >/dev/null
+          fi
+          if [[ "$RELEASE_CHANNEL" == "stable" && "$PROMOTE_STABLE" == "true" ]]; then
+            git fetch origin "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" "refs/tags/${TARGET_VERSION}:refs/tags/${TARGET_VERSION}"
+            release_commit="$(git rev-parse "refs/tags/${TARGET_VERSION}^{commit}")"
+            git push origin "${release_commit}:refs/heads/${DEFAULT_BRANCH}"
+          fi

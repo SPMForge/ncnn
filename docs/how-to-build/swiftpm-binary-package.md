@@ -9,12 +9,12 @@ This document describes the SwiftPM binary release flow maintained on the `main`
 - Automated package tag format: `X.Y.Z-alpha.N`
 - Manual publish mode: `alpha` or `stable`
 - Current mapping rule: upstream tag `YYYYMMDD` becomes package version `1.0.YYYYMMDD`; automated sync starts from `1.0.YYYYMMDD-alpha.1`, reuses the latest alpha tag when the rendered package contract still matches that tagged manifest, and advances to the next `1.0.YYYYMMDD-alpha.N` only when packaging output changes; manual alpha follows the same repair-or-advance rule, and manual stable publishes `1.0.YYYYMMDD`
-- Release metadata file: `scripts/spm/current_release.json`
-- Platform metadata file: `scripts/spm/platforms.json`
-- MoltenVK dependency pin: `scripts/spm/moltenvk_dependency.json`
-- Source acquisition contract: `scripts/spm/source_acquisition.json`
-- Manifest model: release automation regenerates root `Package.swift` from `scripts/spm/current_release.json`; published consumers read a static manifest instead of repo-local sidecar JSON files
-- Checked-in compatibility note: the default-branch `Package.swift` and `scripts/spm/current_release.json` currently describe the already-published `1.0.20260113-alpha.5` artifacts. That historical Vulkan archive uses the retired weak-loader contract and must stay recorded that way until a new archive, tag, and checksum are published by the current release pipeline.
+- Release metadata file: `config/current_release.json`
+- Platform metadata file: `config/platforms.json`
+- MoltenVK dependency pin: `config/moltenvk_dependency.json`
+- Source acquisition contract: `config/source_acquisition.json`
+- Manifest model: release automation regenerates root `Package.swift` from `config/current_release.json`; published consumers read a static manifest instead of repo-local sidecar JSON files
+- Checked-in compatibility note: the default-branch `Package.swift` and `config/current_release.json` currently describe the already-published `1.0.20260113-alpha.5` artifacts. That historical Vulkan archive uses the retired weak-loader contract and must stay recorded that way until a new archive, tag, and checksum are published by the current release pipeline.
 
 Wrapper repo state:
 
@@ -50,7 +50,7 @@ The Vulkan variant additionally uses:
 
 `MoltenVK.framework` is the runtime provider. `MoltenVKHeaders-<version>.zip` is the build-time C/C++ Vulkan include provider. Do not synthesize repo-local `MoltenVK` or `vulkan` include overlays from framework internals during ncnn packaging.
 
-Release builds use the pinned MoltenVK exact dependency recorded by `scripts/spm/moltenvk_dependency.json` so published package manifests are reproducible. The pin records `package_name`, `url`, `version`, and provider deployment floors; artifact checksums are resolved from the GitHub release asset digests during dependency staging unless an operator passes an explicit checksum override. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency.
+Release builds use the pinned MoltenVK exact dependency recorded by `config/moltenvk_dependency.json` so published package manifests are reproducible. The pin records `package_name`, `url`, `version`, and provider deployment floors; artifact checksums are resolved from the GitHub release asset digests during dependency staging unless an operator passes an explicit checksum override. During development, set `SPMFORGE_MOLTENVK_VERSION=<tag>` for all Python commands that render or validate the package contract, or pass `--version <tag>` to `prepare_moltenvk_dependency.py` when only staging the dependency.
 
 The same pin records MoltenVK's provider deployment floors. Because SwiftPM deployment platforms are declared at the package level rather than per product, this package must not declare an iOS or tvOS floor lower than the pinned MoltenVK package when `NCNNVulkan` pulls `MoltenVK` into the graph through `ncnn_vulkan_runtime_support`. With the current provider pin, the package-level floors are iOS 14.0 and tvOS 14.0. Keeping `NCNN` at iOS 13.0 while publishing `NCNNVulkan` in the same SwiftPM package would require splitting the Vulkan product into a separate package.
 
@@ -102,7 +102,7 @@ Two GitHub Actions workflows drive the package lifecycle:
 - `.github/workflows/publish-latest-upstream-alpha.yml`
   - Scheduled latest stable release detection
   - Publishes the initial alpha prerelease for a new upstream tag as `X.Y.Z-alpha.1`
-  - Reuses the latest alpha tag when both the rendered `Package.swift` and `scripts/spm/current_release.json` still match that tagged release commit
+  - Reuses the latest alpha tag when both the rendered `Package.swift` and `config/current_release.json` still match that tagged release commit
   - Advances to the next `X.Y.Z-alpha.N` when either generated package metadata file differs from the latest alpha tag
   - Alpha publishes create tag-only immutable generated metadata commits, do not update the default branch, and must not publish `release/<package_tag>` branches
   - Optional manual rerun
@@ -129,7 +129,7 @@ Each workflow:
 5. Runs `scripts/spm/preflight_apple_platforms.py` so missing Apple platform support fails before long archive jobs start
 6. Validates `MergeableMetadata`, binary paths, required platforms, and `vtool` platform identity
 7. Validates the generated package contract from the same fresh build metadata with `scripts/spm/validate_package_contract.py` or `swift package dump-package`
-8. Renders `scripts/spm/current_release.json` and `Package.swift` for the final package tag
+8. Renders `config/current_release.json` and `Package.swift` for the final package tag
 9. Creates or reuses a package tag that points directly at the immutable generated metadata commit, so the tag checkout contains the generated metadata
 10. Publishes the release assets from GitHub Releases; alpha paths do not update the default branch or publish release branches, while stable promotion may update the default branch with the tagged commit only when `publish_to_default_branch` is explicitly enabled
 
@@ -207,7 +207,7 @@ python3 scripts/spm/prepare_moltenvk_dependency.py \
   --write-pin
 ```
 
-Commit the resulting `scripts/spm/moltenvk_dependency.json` version change before running publish workflows. Publish workflows intentionally read only the committed pin and do not accept `moltenvk_version`.
+Commit the resulting `config/moltenvk_dependency.json` version change before running publish workflows. Publish workflows intentionally read only the committed pin and do not accept `moltenvk_version`.
 
 Run validation CI against a development MoltenVK prerelease without changing publish behavior:
 
@@ -217,7 +217,7 @@ gh workflow run validate-apple-release-pipeline.yml \
   -f moltenvk_version=1.4.1-alpha.7
 ```
 
-Only the non-publishing validation workflow accepts `moltenvk_version`. Publish workflows intentionally do not expose this input; publishing uses the pinned exact dependency from `scripts/spm/moltenvk_dependency.json`.
+Only the non-publishing validation workflow accepts `moltenvk_version`. Publish workflows intentionally do not expose this input; publishing uses the pinned exact dependency from `config/moltenvk_dependency.json`.
 
 Merge release metadata after building both variants:
 
@@ -225,7 +225,7 @@ Merge release metadata after building both variants:
 python3 scripts/spm/render_package.py \
   --release-metadata /tmp/ncnn-spm/ncnn/ncnn.release.json \
   --release-metadata /tmp/ncnn-spm/ncnn_vulkan/ncnn_vulkan.release.json \
-  --current-release-json scripts/spm/current_release.json
+  --current-release-json config/current_release.json
 ```
 
 Validate the current manifest:
@@ -359,7 +359,7 @@ What to verify in CI logs:
 
 - Validation CI now checks the generated package contract from the same artifact set that produced the XCFramework zips, including a local consumer compile against the final multi-product package; PR validation should not wait until the publishing workflow to discover manifest drift.
 - Apple platform support is preflighted before archive work starts; missing `visionOS`, `watchOS`, or other platform support should fail early with an `xcodebuild -downloadPlatform ...` hint instead of failing at the end of a long archive job.
-- Deployment targets remain centralized in `scripts/spm/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
+- Deployment targets remain centralized in `config/platforms.json`; the preflight step treats drift between workflow platform lists and the variant contract as a CI error.
 - The MoltenVK dependency pin records provider deployment floors, and SOP validation fails when package-level SwiftPM floors are lower than the provider package floors.
 - XCFramework validation rejects a flattened macOS framework slice; the macOS bundle must retain its versioned framework layout.
 - XCFramework validation also rejects exported framework headers that still use quoted or non-framework same-header imports.
@@ -372,9 +372,51 @@ What to verify in CI logs:
 - The final package-contract gate repeats consumer validation from the aggregated package root, not only from per-variant standalone XCFrameworks; the `NCNNVulkan` consumer must compile `ncnn_vulkan/gpu.h` without extra Vulkan header search paths.
 - `NCNNVulkan` is a distinct binary target from `NCNN`; do not assume that every Apple platform available in `NCNN` is also available in `NCNNVulkan`.
 - `NCNNVulkan` strong-links the SwiftPM-supplied `MoltenVK.framework`; host packages such as SnowNCNN should not hide loader setup in app-side `dlopen()` code or create `libvulkan` aliases.
-- `Package.swift` is regenerated from `scripts/spm/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
-- Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `scripts/spm/source_acquisition.json`.
+- `Package.swift` is regenerated from `config/current_release.json` during release automation; do not hand-edit `Package.swift` for new releases.
+- Release CI does not build from any checked-in upstream source tree; it builds from the exported upstream snapshot resolved by `config/source_acquisition.json`.
 - Automated SwiftPM package tags are always GitHub prereleases in the alpha channel.
 - Alpha release commits do not update the default branch. Alpha package tags point directly at immutable generated metadata commits so the alpha checkout still contains the generated metadata.
 - Manual publishing must explicitly choose `alpha` or `stable`; stable default-branch writes additionally require the boolean `publish_to_default_branch` operator choice. Repeated packaging fixes for the same upstream snapshot must advance `N`; stable promotion must publish the exact stable package tag once, not mutate an existing alpha release.
-- If the package tag already exists but the GitHub Release was not completed, reruns verify the tagged `Package.swift` and `scripts/spm/current_release.json` before repairing release assets or metadata. Historical `release/*` branches are ignored by new alpha publishes and are not part of the release contract.
+- If the package tag already exists but the GitHub Release was not completed, reruns verify the tagged `Package.swift` and `config/current_release.json` before repairing release assets or metadata. Historical `release/*` branches are ignored by new alpha publishes and are not part of the release contract.
+
+## Immutable Source And Repeat Publication SOP
+
+New package tags also own `config/release-inputs.json`, generated by
+`scripts/release_inputs.py`. It records the upstream repository, upstream tag,
+resolved commit, and SHA-256 digest of wrapper inputs. CI captures it before release
+planning, pins the commit across build jobs, and commits the same identity record
+with the final generated package metadata.
+
+Scheduled and manual alpha publication first inspect the latest existing candidate.
+A complete release with the same recorded source and wrapper inputs skips rebuilding;
+changed inputs require evaluation. Newly rebuilt archives and generated metadata
+still compare strictly, including checksums and URLs. Tag text alone never proves
+source equality. If a tag moves between resolution and export, the run stops before
+replacing the source destination. Dependency pins and deployment models remain inputs.
+
+If all assets exist and only release metadata drifted, matching input identity selects
+a metadata-only repair job: no compilation, artifact upload, or alpha allocation.
+
+The shared publish core uses one repository-scoped lock for scheduled and manual
+entrypoints. SOP verification is a required ancestor of build/publication jobs.
+Unknown GitHub API state stops planning; only HTTP 404 establishes absence. Existing
+assets are verified by digest and only missing assets are uploaded without overwrite.
+An explicit stable default-branch promotion can reuse a verified stable commit even
+when its artifact path skips.
+
+Historical tags without an input record cannot establish safe pre-build reuse. Alpha
+migration may evaluate and publish one new recorded version through the explicit
+advance policy; stable input uncertainty fails safely. Do not add or modify metadata
+on an existing public tag. The identity helper covers committed wrapper inputs;
+floating external dependencies and SDK/toolchain versions need their own evidence.
+
+Local gates remain:
+
+```bash
+python3 scripts/verify_sop_conformance.py
+python3 -m unittest discover -s tests -p "test_*.py"
+```
+
+These checks do not replace final XCFramework, Debug/Release consumer, or remote CI
+acceptance. The generated identity record is a release sidecar, not a prerequisite
+for SwiftPM clients reading the static manifest.

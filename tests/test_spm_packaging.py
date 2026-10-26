@@ -17,13 +17,13 @@ from scripts.spm import preflight_apple_platforms
 from scripts.spm import prepare_moltenvk_dependency
 from scripts.spm import render_package
 from scripts.spm import validate_package_contract
-from scripts.spm import verify_sop_conformance
+from scripts import verify_sop_conformance
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_SWIFT_PATH = REPO_ROOT / "Package.swift"
-CURRENT_RELEASE_METADATA_PATH = REPO_ROOT / "scripts" / "spm" / "current_release.json"
-PLATFORM_METADATA_PATH = REPO_ROOT / "scripts" / "spm" / "platforms.json"
+CURRENT_RELEASE_METADATA_PATH = REPO_ROOT / "config" / "current_release.json"
+PLATFORM_METADATA_PATH = REPO_ROOT / "config" / "platforms.json"
 SMOKE_TEST_PATH = REPO_ROOT / "scripts" / "spm" / "smoke_test_package.py"
 
 
@@ -281,7 +281,7 @@ class MoltenVKDependencyConfigTests(unittest.TestCase):
             self.assertEqual(config["headers_checksum"], "")
 
     def test_package_platforms_cover_pinned_provider_minimums(self) -> None:
-        pin = json.loads((REPO_ROOT / "scripts" / "spm" / "moltenvk_dependency.json").read_text())
+        pin = json.loads((REPO_ROOT / "config" / "moltenvk_dependency.json").read_text())
         minimum_platforms = pin.get("minimum_platforms")
         self.assertIsInstance(minimum_platforms, dict)
 
@@ -1297,15 +1297,17 @@ class SopConformanceTests(unittest.TestCase):
             temporary_root = Path(temporary_directory)
             repo_root = temporary_root / "repo"
             target_dir = repo_root / "scripts" / "spm"
+            config_dir = repo_root / "config"
             target_dir.mkdir(parents=True)
-            shutil.copy2(PLATFORM_METADATA_PATH, target_dir / "platforms.json")
+            config_dir.mkdir(parents=True)
+            shutil.copy2(PLATFORM_METADATA_PATH, config_dir / "platforms.json")
 
             hardcoded_script = target_dir / "build_apple_xcframework.py"
             hardcoded_script.write_text('command.append("-DDEPLOYMENT_TARGET=14.0")\n')
 
             with self.assertRaisesRegex(
                 SystemExit,
-                "must stay centralized in scripts/spm/platforms.json",
+                "must stay centralized in config/platforms.json",
             ):
                 verify_sop_conformance._assert_no_hardcoded_deployment_targets(
                     repo_root,

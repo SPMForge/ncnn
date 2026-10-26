@@ -400,6 +400,20 @@ def _external_framework_include_rewrites_for_variant(variant: packaging.Variant)
     return {}
 
 
+_TEXTUAL_FRAMEWORK_HEADERS = frozenset(
+    {
+        "layer_shader_type_enum.h",
+        "layer_type_enum.h",
+        "simplemath.h",
+        "simpleocv.h",
+        "simpleomp.h",
+        "simplestl.h",
+        "simplevk.h",
+        "vulkan_header_fix.h",
+    }
+)
+
+
 def _copy_framework_headers(headers_source: Path, destination_dir: Path) -> None:
     destination_dir.mkdir(parents=True, exist_ok=True)
     for source_path in headers_source.iterdir():
@@ -412,15 +426,24 @@ def _copy_framework_headers(headers_source: Path, destination_dir: Path) -> None
             shutil.copy2(source_path, destination_dir / source_path.name)
 
 
-def _write_framework_module_map(module_map_path: Path, module_name: str) -> None:
-    module_map_path.write_text(
-        f"""framework module {module_name} {{
-    umbrella "../Headers"
-    export *
-    module * {{ export * }}
-}}
-"""
+def _write_framework_module_map(
+    module_map_path: Path,
+    module_name: str,
+    headers_dir: Path | None = None,
+) -> None:
+    resolved_headers_dir = headers_dir or (module_map_path.parent.parent / "Headers")
+    header_names = (
+        sorted(path.name for path in resolved_headers_dir.glob("*.h") if path.is_file())
+        if resolved_headers_dir.is_dir()
+        else []
     )
+    lines = [f"framework module {module_name} {{"]
+    for header_name in header_names:
+        directive = "textual header" if header_name in _TEXTUAL_FRAMEWORK_HEADERS else "header"
+        lines.append(f'    {directive} "{header_name}"')
+    lines.append("    export *")
+    lines.append("}")
+    module_map_path.write_text("\n".join(lines) + "\n")
 
 
 def _write_framework_info_plist(info_plist_path: Path, bundle_name: str) -> None:

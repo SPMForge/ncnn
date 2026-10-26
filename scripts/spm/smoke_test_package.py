@@ -29,7 +29,7 @@ def _stage_xcframework(package_root: Path, xcframework_path: Path) -> Path:
     artifacts_root = package_root / "Artifacts"
     artifacts_root.mkdir(parents=True, exist_ok=True)
     staged_xcframework_path = artifacts_root / xcframework_path.name
-    shutil.copytree(xcframework_path, staged_xcframework_path)
+    shutil.copytree(xcframework_path.resolve(), staged_xcframework_path, symlinks=True)
     return staged_xcframework_path.relative_to(package_root)
 
 
@@ -84,19 +84,59 @@ let package = Package(
     ],
     products: [
         .executable(name: "Smoke", targets: ["Smoke"]),
+        .executable(name: "SmokeSwift", targets: ["SmokeSwift"]),
     ],
 {dependency_section}\
     targets: [
         .binaryTarget(name: "{variant.target_name}", path: "{local_xcframework_path.as_posix()}"),
 {runtime_target_section}\
         .executableTarget(
+            name: "SmokeSwift",
+            dependencies: [{executable_dependency_list}],
+            path: "SmokeSwift",
+            swiftSettings: [
+                .interoperabilityMode(.Cxx),
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path",
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path/PackageFrameworks",
+                ]),
+            ]
+        ),
+        .executableTarget(
             name: "Smoke",
             dependencies: [{executable_dependency_list}],
-            path: "Smoke"
+            path: "Smoke",
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path",
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path/PackageFrameworks",
+                ]),
+            ]
         ),
     ],
     cxxLanguageStandard: .cxx11
 )
+"""
+
+    main_swift = f"""import Foundation
+import {variant.target_name}
+
+let cpuCount = ncnn.get_cpu_count()
+guard cpuCount > 0 else {{
+    fatalError("ncnn CPU count check failed")
+}}
+let mat = ncnn_mat_create_2d(4, 4, nil)
+guard let mat else {{
+    fatalError("ncnn_mat_create_2d returned nil")
+}}
+ncnn_mat_fill_float(mat, 42.0)
+guard ncnn_mat_get_w(mat) == 4 && ncnn_mat_get_h(mat) == 4 else {{
+    fatalError("ncnn_mat dimensions mismatch")
+}}
+ncnn_mat_destroy(mat)
+print("✅ [Swift SPM Consumer] {variant.target_name} verified! Apple Silicon Cores: \\(cpuCount), Version: \\(String(cString: ncnn_version()))")
 """
 
     if variant is packaging.VULKAN_VARIANT:
@@ -122,7 +162,10 @@ int main()
 }}
 """
 
+    (package_root / "Smoke").mkdir(parents=True, exist_ok=True)
+    (package_root / "SmokeSwift").mkdir(parents=True, exist_ok=True)
     (package_root / "Package.swift").write_text(package_swift)
+    (package_root / "SmokeSwift" / "main.swift").write_text(main_swift)
     (package_root / "Smoke" / "main.cpp").write_text(main_cpp)
 
 
@@ -139,7 +182,7 @@ def main() -> int:
             [
                 "xcodebuild",
                 "-scheme",
-                "NCNNSmoke",
+                "NCNNSmoke-Package",
                 "-configuration",
                 "Release",
                 "-destination",
@@ -149,6 +192,7 @@ def main() -> int:
             ],
             package_root,
         )
+        _run(["swift", "run", "-c", "release", "SmokeSwift"], package_root)
         _run(["swift", "run", "-c", "release", "Smoke"], package_root)
 
     return 0

@@ -10,7 +10,7 @@ from scripts.spm import packaging
 from scripts.spm import tag_selection
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 SELECT_UPSTREAM_TAG_SCRIPT = REPO_ROOT / "scripts" / "spm" / "select_upstream_tag.py"
 
 
@@ -226,7 +226,16 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 },
             )
 
-    def test_backfill_mode_bumps_alpha_number_when_package_tag_exists(self) -> None:
+    def test_manual_alpha_reuses_latest_candidate_before_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            self._init_git_repo(repo_root)
+            subprocess.run(["git", "tag", "1.0.20260113-alpha.2"], cwd=repo_root, check=True)
+            payload = self._run_script(repo_root, "--explicit-tag", "20260113", "--release-channel", "alpha")
+            self.assertEqual(payload["build_tag"], "1.0.20260113-alpha.2")
+            self.assertEqual(payload["next_package_tag"], "1.0.20260113-alpha.3")
+
+    def test_backfill_alias_reuses_latest_candidate_before_build(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repo_root = Path(temporary_directory)
             self._init_git_repo(repo_root)
@@ -239,12 +248,12 @@ class SelectUpstreamTagScriptTests(unittest.TestCase):
                 payload,
                 {
                     "upstream_tag": "20260113",
-                    "build_tag": "1.0.20260113-alpha.3",
-                    "package_tag": "1.0.20260113-alpha.3",
+                    "build_tag": "1.0.20260113-alpha.2",
+                    "package_tag": "1.0.20260113-alpha.2",
                     "latest_package_tag": "1.0.20260113-alpha.2",
                     "next_package_tag": "1.0.20260113-alpha.3",
-                    "remote_tag_exists": False,
-                    "remote_tag_commit": "",
+                    "remote_tag_exists": True,
+                    "remote_tag_commit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True).stdout.strip(),
                 },
             )
 
