@@ -397,7 +397,7 @@ def _validate_local_package_consumers(
             prefix=f"ncnn-package-contract-smoke-{release_input.build_metadata.release_asset.variant.target_name}-"
         ) as temporary_directory:
             consumer_root = Path(temporary_directory)
-            consumer_package_name = _write_consumer_package(
+            _write_consumer_package(
                 consumer_root=consumer_root,
                 local_package_root=local_package_root,
                 package_name=package_name,
@@ -405,22 +405,27 @@ def _validate_local_package_consumers(
             )
             _run(["swift", "build", "-c", "debug"], cwd=consumer_root)
             _run(["swift", "build", "-c", "release"], cwd=consumer_root)
-            _run(
-                [
-                    "xcodebuild",
-                    "-scheme",
-                    f"{consumer_package_name}-Package",
-                    "-configuration",
-                    "Release",
-                    "-destination",
-                    "generic/platform=macOS",
-                    "MERGED_BINARY_TYPE=automatic",
-                    "build",
-                ],
-                cwd=consumer_root,
-            )
-            _run(["swift", "run", "-c", "release", "SmokeSwift"], cwd=consumer_root)
-            _run(["swift", "run", "-c", "release", "Smoke"], cwd=consumer_root)
+            # Xcode's aggregate package scheme embeds the same transitive
+            # provider twice when both executable probes share the SDK product.
+            for product in ("SmokeSwift", "Smoke"):
+                _run(
+                    [
+                        "xcodebuild",
+                        "-scheme",
+                        product,
+                        "-configuration",
+                        "Release",
+                        "-destination",
+                        "generic/platform=macOS",
+                        "MERGED_BINARY_TYPE=automatic",
+                        "build",
+                    ],
+                    cwd=consumer_root,
+                )
+            for configuration in ("debug", "release"):
+                for product in ("SmokeSwift", "Smoke"):
+                    _run(["swift", "run", "-c", configuration, product], cwd=consumer_root)
+
 
 
 def main(argv: list[str] | None = None) -> int:

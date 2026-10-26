@@ -317,8 +317,9 @@ def main(repo_root: Path = REPO_ROOT) -> int:
         "SmokeSwift" in validate_package_contract_script
         and '"swift", "run"' in validate_package_contract_script
         and "@loader_path/PackageFrameworks" in validate_package_contract_script
-        and "-Package" in validate_package_contract_script,
-        "final package-contract validation must execute pure Swift consumer SmokeSwift via swift run with @loader_path rpaths and -Package scheme",
+        and 'for product in ("SmokeSwift", "Smoke")' in validate_package_contract_script
+        and '"MERGED_BINARY_TYPE=automatic"' in validate_package_contract_script,
+        "final package-contract validation must execute pure Swift consumer SmokeSwift via swift run with @loader_path rpaths and independent mergeable executable schemes",
     )
     require(
         'umbrella "../Headers"' not in build_script
