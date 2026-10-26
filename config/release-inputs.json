@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "upstream_commit": "7e36d25cb153092ba87a60530455c7376fedf452",
+  "upstream_repository": "https://github.com/Tencent/ncnn.git",
+  "upstream_tag": "20261020",
+  "wrapper_inputs_sha256": "e2b26f32ae150190a5c895de3d0c50fa19f21f9fb7938dd0b75186951a7cd0a2"
+}
