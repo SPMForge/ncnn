@@ -13,6 +13,7 @@ if __package__ in {None, ""}:
 from scripts.spm import packaging
 from scripts.spm import source_acquisition
 from scripts.spm import tag_selection
+from scripts import release_inputs
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -29,6 +30,7 @@ def _parse_arguments() -> argparse.Namespace:
         help="Git ref prefix scanned when --explicit-tag is not provided. Defaults to the repo-local source acquisition contract.",
     )
     parser.add_argument("--repo-root", default=packaging.REPO_ROOT, type=Path)
+    parser.add_argument("--github-repository", help="Reserve public Release names as well as Git tags.")
     parser.add_argument(
         "--github-output",
         type=Path,
@@ -109,6 +111,14 @@ def _resolve_release_tags(arguments: argparse.Namespace, upstream_tag: str) -> t
         upstream_tag,
         alpha_number=packaging.next_alpha_number_for_upstream_tag(upstream_tag, package_refs),
     )
+
+    repository = getattr(arguments, "github_repository", None)
+    if repository:
+        # A Release can survive deletion of its tag and still reserve that name.
+        # Only an authoritative 404 permits creating a new public version.
+        while release_inputs.github_json(f"repos/{repository}/releases/tags/{next_alpha_tag}") is not None:
+            prefix, number = next_alpha_tag.rsplit(".", 1)
+            next_alpha_tag = f"{prefix}.{int(number) + 1}"
 
     return latest_alpha_tag or next_alpha_tag, latest_alpha_tag or "", next_alpha_tag
 

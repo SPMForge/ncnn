@@ -62,8 +62,10 @@ jobs:
           python3 scripts/spm/source_acquisition.py fetch-tags --repo-root "$GITHUB_WORKSPACE"
       - name: resolve-upstream-tag
         id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          select_args=(--repo-root "$GITHUB_WORKSPACE" --release-channel "${{ inputs.release_channel }}" --github-output "$GITHUB_OUTPUT")
+          select_args=(--repo-root "$GITHUB_WORKSPACE" --release-channel "${{ inputs.release_channel }}" --github-repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT")
           if [ -n "${{ inputs.upstream_tag }}" ]; then
             select_args+=(--explicit-tag "${{ inputs.upstream_tag }}")
           fi
