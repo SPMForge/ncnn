@@ -1,4 +1,4 @@
-name: publish-latest-upstream-alpha
+name: Publish Latest Upstream Alpha
 
 on:
   schedule:
@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   publish:
+    name: Alpha Release
     uses: ./.github/workflows/_publish-upstream-release-core.yml
     with:
       release_channel: sync

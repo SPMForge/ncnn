@@ -1,4 +1,4 @@
-name: _publish-upstream-release-core
+name: Publish Package Release Core
 'on':
   workflow_call:
     inputs:
@@ -97,6 +97,8 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
     needs: verify
   build:
+    outputs:
+      toolchain: ${{ steps.artifact_inventory.outputs.toolchain }}
     name: Build (${{ matrix.variant }})
     needs:
       - verify
@@ -239,6 +241,7 @@ jobs:
             "$archive_path" \
             "${validation_args[@]}"
       - name: Record immutable artifact inventory
+        id: artifact_inventory
         run: python3 scripts/ci_artifacts.py record --root "$RUNNER_TEMP/spm-artifacts/${{ matrix.variant }}"
       - name: upload-artifacts
         id: upload_artifacts
@@ -300,6 +303,9 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
   release:
+    outputs:
+      package_tag: ${{ steps.publication_plan.outputs.final_package_tag }}
+      action: ${{ steps.release_status.outputs.mode }}
     name: Publish
     needs:
       - resolve
@@ -665,6 +671,7 @@ jobs:
       - name: Report all stage results
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci_artifacts.py summary
     needs:
       - verify

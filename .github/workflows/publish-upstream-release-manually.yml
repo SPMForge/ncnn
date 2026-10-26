@@ -1,4 +1,4 @@
-name: publish-upstream-release-manually
+name: Publish Upstream Release Manually
 
 on:
   workflow_dispatch:
@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   publish:
+    name: Requested Release
     uses: ./.github/workflows/_publish-upstream-release-core.yml
     with:
       upstream_tag: ${{ inputs.upstream_tag }}
